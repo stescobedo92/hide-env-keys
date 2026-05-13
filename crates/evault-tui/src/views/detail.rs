@@ -17,12 +17,14 @@ use crate::provider::VarSummary;
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) {
-    let Some(var) = app.selected_row() else {
-        // Should not happen — the dashboard refuses to open detail
-        // without a selection — but render a graceful empty pane just
-        // in case the row disappeared between selection and refresh.
+    // Look up the inspected variable by *identity*, not by selection
+    // index, so a concurrent refresh cannot swap the pane's contents
+    // out from under the user. The `None` branch is reachable as a
+    // single-frame transient between row removal and the runtime's
+    // next `refresh` (which auto-returns to dashboard with a toast).
+    let Some(var) = app.detail_row() else {
         let block = Block::bordered().title(" detail ");
-        let para = Paragraph::new("no row available")
+        let para = Paragraph::new("variable no longer available")
             .block(block)
             .style(theme.dim_cell());
         frame.render_widget(para, area);

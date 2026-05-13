@@ -1,5 +1,6 @@
 //! Deterministic state machine driving the dashboard.
 
+use evault_core::model::VarId;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
@@ -77,6 +78,12 @@ pub struct AppState {
     quit: bool,
     filter: Option<FilterState>,
     view: View,
+    /// `Some(id)` while `view == Detail`. Tracking the inspected
+    /// variable by id (rather than by selection index) keeps the
+    /// Detail screen from silently re-pointing at a different row
+    /// when an external mutation reshuffles the row buffer. Cleared
+    /// on every return to the dashboard.
+    detail_target: Option<VarId>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
@@ -119,6 +126,7 @@ impl AppState {
             quit: false,
             filter: None,
             view: View::Dashboard,
+            detail_target: None,
         }
     }
 
@@ -147,7 +155,26 @@ impl AppState {
         self.rows = rows;
         self.rebuild_filter();
         self.clamp_selection();
+        // Detail-target validation. If the user is inspecting a
+        // variable that just disappeared (external delete, profile
+        // switch, etc.) auto-return to the dashboard with a loud
+        // error toast. Without this check the Detail pane would
+        // silently re-anchor by index and start showing a
+        // *different* variable under the same screen header — the
+        // exact silent-failure mode the audit charter forbids.
+        if matches!(self.view, View::Detail) && !self.detail_target_is_present() {
+            self.view = View::Dashboard;
+            self.detail_target = None;
+            self.set_error_toast("variable removed elsewhere \u{2014} returned to dashboard");
+        }
         Ok(())
+    }
+
+    fn detail_target_is_present(&self) -> bool {
+        let Some(target) = self.detail_target else {
+            return false;
+        };
+        self.rows.iter().any(|v| v.id == target)
     }
 
     /// Dispatch a raw key event.
@@ -306,20 +333,48 @@ impl AppState {
 
     /// Switch to [`View::Detail`] for the currently-selected row.
     ///
-    /// If no row is selected (empty dashboard, or no rows match the
-    /// filter) the call is a no-op aside from surfacing a brief
-    /// "no row selected" toast.
+    /// The selected row's `VarId` is snapshotted into
+    /// [`detail_target`](Self::detail_row) so the Detail screen looks
+    /// up its data by identity rather than index — this prevents the
+    /// pane from silently re-pointing at a different row when a
+    /// concurrent refresh reshuffles the row buffer.
+    ///
+    /// If no row is selected, the call is a no-op aside from a brief
+    /// `"no row selected"` info toast. A pre-existing error toast is
+    /// **never** clobbered (errors are sticky for a reason; an
+    /// accidental Enter must not erase a refresh-failure notice the
+    /// user has not yet read).
     pub fn open_detail(&mut self) {
-        if self.selected_row().is_some() {
+        if let Some(var) = self.selected_row() {
+            self.detail_target = Some(var.id);
             self.view = View::Detail;
-        } else {
+            return;
+        }
+        // Preserve sticky error toasts; only show the info hint when
+        // the toast slot is empty or already an info toast (which
+        // `apply` already cleared before dispatch in the normal path).
+        if !self.toast_is_error() {
             self.set_info_toast("no row selected");
         }
     }
 
-    /// Return to the dashboard from any other view.
+    /// Return to the dashboard from any other view. Clears the
+    /// Detail target so a subsequent re-entry re-snapshots fresh.
     pub const fn return_to_dashboard(&mut self) {
         self.view = View::Dashboard;
+        self.detail_target = None;
+    }
+
+    /// The variable currently displayed by the Detail view, looked
+    /// up by identity rather than by selection index.
+    ///
+    /// Returns `None` when no Detail view is active, or when the
+    /// inspected variable has been removed from the row buffer
+    /// between Detail entry and the current frame.
+    #[must_use]
+    pub fn detail_row(&self) -> Option<&VarSummary> {
+        let id = self.detail_target?;
+        self.rows.iter().find(|v| v.id == id)
     }
 
     fn filter_push(&mut self, c: char) {
@@ -520,6 +575,7 @@ impl AppState {
         }
         if !matches!(self.view, View::Dashboard) {
             self.view = View::Dashboard;
+            self.detail_target = None;
             return;
         }
         if matches!(self.overlay, Overlay::Help) {
@@ -1031,6 +1087,99 @@ mod tests {
         app.apply(Action::ToggleHelp);
         assert!(app.help_visible());
         assert_eq!(app.current_view(), View::Detail);
+    }
+
+    #[test]
+    fn detail_row_resolves_by_identity_after_row_reorder() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        // Select API_KEY (index 1) and open detail.
+        app.apply(Action::MoveDown);
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Detail);
+        assert_eq!(
+            app.detail_row().map(|v| v.id),
+            Some(target_id),
+            "Detail must resolve to the originally inspected var"
+        );
+
+        // Now refresh with the SAME rows but in reverse order. By
+        // index alone the Detail pane would silently jump to a
+        // different variable.
+        let reversed_rows: Vec<VarSummary> = {
+            let mut tmp = app.rows().to_vec();
+            tmp.reverse();
+            tmp
+        };
+        app.refresh(&StaticProvider(reversed_rows)).unwrap();
+        assert_eq!(app.current_view(), View::Detail);
+        assert_eq!(
+            app.detail_row().map(|v| v.id),
+            Some(target_id),
+            "Detail target must follow identity through a row reorder"
+        );
+    }
+
+    #[test]
+    fn refresh_returns_from_detail_when_inspected_var_is_gone() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::MoveDown); // select API_KEY
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Detail);
+
+        // External delete: rebuild rows without the inspected target.
+        let surviving: Vec<VarSummary> = app
+            .rows()
+            .iter()
+            .filter(|v| v.id != target_id)
+            .cloned()
+            .collect();
+        app.refresh(&StaticProvider(surviving)).unwrap();
+
+        assert_eq!(
+            app.current_view(),
+            View::Dashboard,
+            "must auto-return to dashboard when the inspected var disappears"
+        );
+        assert!(
+            app.toast_text()
+                .is_some_and(|t| t.contains("removed elsewhere")),
+            "must surface a loud error toast"
+        );
+        assert!(app.toast_is_error());
+    }
+
+    #[test]
+    fn open_detail_does_not_clobber_sticky_error_toast() {
+        let mut app = AppState::new();
+        app.refresh(&StaticProvider(Vec::new())).unwrap();
+        app.set_error_toast("backend failure");
+        // Apply via `apply` so the pre-dispatch info-clear runs:
+        // error toasts must survive that step AND the open_detail
+        // empty-selection branch.
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.toast_text(), Some("backend failure"));
+        assert!(app.toast_is_error());
+        assert_eq!(app.current_view(), View::Dashboard);
+    }
+
+    #[test]
+    fn return_to_dashboard_clears_detail_target() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::OpenDetail);
+        assert!(app.detail_row().is_some());
+        app.apply(Action::Dismiss);
+        assert_eq!(app.current_view(), View::Dashboard);
+        // Internal invariant: re-opening Detail must re-snapshot
+        // against the current selection, not retain the prior target.
+        app.apply(Action::MoveDown);
+        let new_target = app.selected_row().expect("selection").id;
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.detail_row().map(|v| v.id), Some(new_target));
     }
 
     #[test]
