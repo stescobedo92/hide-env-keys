@@ -8,6 +8,7 @@
 //! `&[&str]` slice to [`MIGRATIONS`], and ensure the slice contains every
 //! SQL statement needed to migrate from the previous version.
 
+#[cfg(feature = "sqlcipher")]
 use rusqlite::Connection;
 
 use crate::encoding::backend;
@@ -76,23 +77,52 @@ const MIGRATIONS: &[&[&str]] = &[&[
     "CREATE INDEX idx_audit_at ON audit_log(at)",
 ]];
 
-/// Read the on-disk schema version through `PRAGMA user_version`.
-fn current_version(conn: &Connection) -> Result<u32, MetadataError> {
-    let v: i64 = conn
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(|e| backend("read user_version", &e))?;
-    u32::try_from(v).map_err(|_| MetadataError::Backend("user_version out of range".into()))
+/// Per-step error category labels. Add an entry alongside each new
+/// migration version so the error category stays specific.
+const STEP_LABELS: &[&str] = &["migration v0->v1"];
+
+fn format_step(idx: usize) -> &'static str {
+    STEP_LABELS.get(idx).copied().unwrap_or("migration")
 }
 
 /// Apply every pending migration. Runs inside a single transaction so a
 /// failure mid-way leaves the database at the previous version.
 ///
+/// Used by the `sqlcipher` open path which performs key application
+/// outside the migration transaction. The non-sqlcipher path uses
+/// [`run_in_tx`] directly to bundle migrations with the key-digest write.
+///
 /// # Errors
 /// Returns [`MetadataError::Backend`] if reading or writing the schema
 /// fails, or if the on-disk version is **newer** than [`SCHEMA_VERSION`]
 /// (which would indicate the file was opened with a future build).
+#[cfg(feature = "sqlcipher")]
 pub fn run(conn: &mut Connection) -> Result<(), MetadataError> {
-    let current = current_version(conn)?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| backend("begin migration", &e))?;
+    run_in_tx(&tx)?;
+    tx.commit().map_err(|e| backend("commit migration", &e))?;
+    Ok(())
+}
+
+/// Apply migrations using an externally-owned transaction. The caller is
+/// responsible for committing.
+///
+/// Used by `init_or_verify_unencrypted` to keep the meta-table write and
+/// the schema migrations under a single atomic transaction.
+///
+/// # Errors
+/// Same as [`run`].
+pub fn run_in_tx(tx: &rusqlite::Transaction<'_>) -> Result<(), MetadataError> {
+    // Read the current version inside the transaction so we observe the
+    // same view of the database as the migration writes.
+    let v: i64 = tx
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|e| backend("read user_version", &e))?;
+    let current =
+        u32::try_from(v).map_err(|_| MetadataError::Backend("user_version out of range".into()))?;
+
     if current > SCHEMA_VERSION {
         return Err(MetadataError::Backend(format!(
             "database schema is version {current}; this build supports up to {SCHEMA_VERSION}"
@@ -102,9 +132,6 @@ pub fn run(conn: &mut Connection) -> Result<(), MetadataError> {
         return Ok(());
     }
 
-    let tx = conn
-        .transaction()
-        .map_err(|e| backend("begin migration", &e))?;
     for (step_idx, statements) in MIGRATIONS
         .iter()
         .enumerate()
@@ -115,17 +142,7 @@ pub fn run(conn: &mut Connection) -> Result<(), MetadataError> {
                 .map_err(|e| backend(format_step(step_idx), &e))?;
         }
     }
-    // Bump the user_version inside the same transaction.
     tx.pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
         .map_err(|e| backend("bump user_version", &e))?;
-    tx.commit().map_err(|e| backend("commit migration", &e))?;
     Ok(())
-}
-
-const fn format_step(idx: usize) -> &'static str {
-    // Static strings keep the error category leak-free.
-    match idx {
-        0 => "migration v0->v1",
-        _ => "migration",
-    }
 }

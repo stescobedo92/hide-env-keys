@@ -85,22 +85,21 @@ impl SqlCipherMetadataStore {
             apply_key(&conn, &key.to_hex_secret())?;
             verify_key(&conn)?;
         }
+        // Enable FK enforcement and WAL before any write inside the open
+        // transaction. Both pragmas are connection-scoped and idempotent.
+        pragma_setup(&conn)?;
         #[cfg(not(feature = "sqlcipher"))]
         {
-            // Without the `sqlcipher` feature the database is not encrypted
-            // at rest. The key is still required by the API so that callers
-            // (and the OS keyring round-trip) remain consistent across
-            // builds; we store its hex hash in a meta row to give a coarse
-            // "wrong key → refuse to open" check.
-            verify_or_record_key(&conn, key)?;
+            // Without the `sqlcipher` feature, the key digest check and the
+            // migrations live inside a single transaction so a half-finished
+            // open never leaves a "phantom" database where the meta table
+            // exists but no schema does.
+            init_or_verify_unencrypted(&mut conn, key)?;
         }
-        // Enable FK enforcement for the cascading deletes.
-        conn.execute_batch("PRAGMA foreign_keys = ON")
-            .map_err(|e| SqlCipherOpenError::Backend(format!("enable foreign keys: {e:?}")))?;
-        // Use the more robust WAL journal mode for concurrent reads.
-        conn.execute_batch("PRAGMA journal_mode = WAL")
-            .map_err(|e| SqlCipherOpenError::Backend(format!("set wal: {e:?}")))?;
-        migrations::run(&mut conn).map_err(|e| SqlCipherOpenError::Schema(format!("{e}")))?;
+        #[cfg(feature = "sqlcipher")]
+        {
+            migrations::run(&mut conn).map_err(|e| SqlCipherOpenError::Schema(format!("{e}")))?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -117,9 +116,28 @@ fn open_io(e: &rusqlite::Error) -> SqlCipherOpenError {
     // Carry the SQLite error code only; never a path or query string.
     let code = match e {
         rusqlite::Error::SqliteFailure(sqlite, _) => format!("{:?}", sqlite.code),
+        rusqlite::Error::InvalidPath(_) => "invalid_path".to_owned(),
         _ => "rusqlite".to_owned(),
     };
     SqlCipherOpenError::Io(code)
+}
+
+fn pragma_setup(conn: &Connection) -> Result<(), SqlCipherOpenError> {
+    conn.execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|e| match &e {
+            rusqlite::Error::SqliteFailure(s, _) => {
+                SqlCipherOpenError::Backend(format!("enable foreign keys: {:?}", s.code))
+            }
+            _ => SqlCipherOpenError::Backend("enable foreign keys".into()),
+        })?;
+    conn.execute_batch("PRAGMA journal_mode = WAL")
+        .map_err(|e| match &e {
+            rusqlite::Error::SqliteFailure(s, _) => {
+                SqlCipherOpenError::Backend(format!("set wal: {:?}", s.code))
+            }
+            _ => SqlCipherOpenError::Backend("set wal".into()),
+        })?;
+    Ok(())
 }
 
 #[cfg(feature = "sqlcipher")]
@@ -142,67 +160,113 @@ fn apply_key(conn: &Connection, hex_key: &SecretString) -> Result<(), SqlCipherO
 fn verify_key(conn: &Connection) -> Result<(), SqlCipherOpenError> {
     // Any read that touches the encrypted header confirms the key works.
     // `sqlite_master` is the canonical SQLCipher quick-check.
+    //
+    // We map only `SQLITE_NOTADB` (the canonical "page contents don't look
+    // like a SQLite database after decryption" signal) to `BadKey`. Other
+    // errors (`SQLITE_CORRUPT`, `SQLITE_IOERR`, `SQLITE_BUSY`) propagate as
+    // `Backend` so the user can distinguish a real key mismatch from a
+    // failing disk or a locked file.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| {
         r.get::<_, i64>(0)
     })
     .map(|_| ())
-    .map_err(|_| SqlCipherOpenError::BadKey)
+    .map_err(|e| match e {
+        rusqlite::Error::SqliteFailure(s, _) if s.extended_code == rusqlite::ffi::SQLITE_NOTADB => {
+            SqlCipherOpenError::BadKey
+        }
+        rusqlite::Error::SqliteFailure(s, _) => {
+            SqlCipherOpenError::Backend(format!("verify key: {:?}", s.code))
+        }
+        _ => SqlCipherOpenError::Backend("verify key".into()),
+    })
 }
 
-/// Without `SQLCipher`, record (on first open) a hex digest of the master
-/// key in a `meta` table and refuse to open if a subsequent call presents
-/// a key whose digest does not match.
+/// Without `SQLCipher`, record (on first open) a SHA-256 digest of the
+/// master key in a `meta` table and refuse to open if a subsequent call
+/// presents a key whose digest does not match.
 ///
-/// The on-disk meta row is not a secret itself — it is a one-way
-/// transform of the master key with a fixed domain separator. An
-/// attacker with read access to the database can still see all
-/// metadata; this check only prevents *another* `MasterKey` from
-/// silently reading a database it didn't create.
+/// **Threat model**: in this mode the database file is **not** encrypted
+/// at rest — an attacker with read access to the file sees every variable
+/// name, project path, and audit row in plaintext. The digest check is a
+/// defense against accidentally opening a database with the wrong key, not
+/// a cryptographic authenticator. Use the `sqlcipher` feature for at-rest
+/// encryption.
+///
+/// SHA-256 is domain-separated with a fixed prefix so the on-disk digest
+/// cannot be confused with any other use of the master key.
+///
+/// The verify-or-record step runs inside a single transaction with the
+/// migrations so a half-finished open never leaves a "phantom" database
+/// where the meta table exists but no schema does.
 #[cfg(not(feature = "sqlcipher"))]
-fn verify_or_record_key(conn: &Connection, key: &MasterKey) -> Result<(), SqlCipherOpenError> {
+fn init_or_verify_unencrypted(
+    conn: &mut Connection,
+    key: &MasterKey,
+) -> Result<(), SqlCipherOpenError> {
     use std::fmt::Write as _;
 
     use evault_core::crypto::ExposeSecret;
+    use rusqlite::OptionalExtension;
+    use sha2::{Digest, Sha256};
 
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
-        .map_err(|e| SqlCipherOpenError::Backend(format!("create meta table: {e:?}")))?;
-    // Domain-separated digest: SHA-256 would be ideal but we avoid pulling
-    // a hash crate; instead we use a length-prefixed XOR-fold of the key
-    // bytes with a fixed salt. This is a coarse "are you the same key"
-    // check, not a cryptographic authenticator — it lives entirely behind
-    // the `not(feature = "sqlcipher")` cfg gate and is replaced by the
-    // real PRAGMA key check when SQLCipher is enabled.
+    // Compute the digest outside the transaction; it depends only on `key`.
     let key_hex = key.to_hex_secret();
-    let mut digest = [0_u8; 32];
-    let bytes = key_hex.expose_secret().as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        // Truncating `i` to a byte is intentional: the salt cycles modulo
-        // 256, paired with the modulo-32 indexing of `digest`.
-        let salt = u8::try_from(i & 0xFF).unwrap_or(0).wrapping_mul(31);
-        digest[i % digest.len()] ^= *b ^ salt;
-    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"evault-key-digest-v1\0");
+    hasher.update(key_hex.expose_secret().as_bytes());
+    let digest = hasher.finalize();
     let mut digest_hex = String::with_capacity(64);
-    for b in &digest {
-        // `write!` into a String is infallible per `std::fmt::Write` docs.
-        let _ = write!(digest_hex, "{b:02x}");
+    for b in digest {
+        // `write!` to a `String` cannot fail (per `std::fmt::Write` impl
+        // for `String`). We allow `expect_used` locally to encode the
+        // invariant structurally.
+        #[allow(clippy::expect_used)]
+        {
+            write!(digest_hex, "{b:02x}").expect("writing to String is infallible");
+        }
     }
 
-    let existing: Option<String> = conn
+    let tx = conn
+        .transaction()
+        .map_err(|e| SqlCipherOpenError::Backend(format!("begin open tx: {}", error_code(&e))))?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+        .map_err(|e| SqlCipherOpenError::Backend(format!("create meta: {}", error_code(&e))))?;
+
+    let existing: Option<String> = tx
         .query_row("SELECT v FROM meta WHERE k = 'key_digest'", [], |row| {
             row.get(0)
         })
-        .ok();
+        .optional()
+        .map_err(|e| SqlCipherOpenError::Backend(format!("read digest: {}", error_code(&e))))?;
+
     match existing {
-        Some(prev) if prev == digest_hex => Ok(()),
-        Some(_) => Err(SqlCipherOpenError::BadKey),
+        Some(prev) if prev == digest_hex => {}
+        Some(_) => return Err(SqlCipherOpenError::BadKey),
         None => {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO meta (k, v) VALUES ('key_digest', ?1)",
                 rusqlite::params![digest_hex],
             )
-            .map_err(|e| SqlCipherOpenError::Backend(format!("record key digest: {e:?}")))?;
-            Ok(())
+            .map_err(|e| {
+                SqlCipherOpenError::Backend(format!("write digest: {}", error_code(&e)))
+            })?;
         }
+    }
+
+    // Run migrations under the same transaction so any failure leaves the
+    // file at its previous state — no phantom meta row.
+    migrations::run_in_tx(&tx).map_err(|e| SqlCipherOpenError::Schema(format!("{e}")))?;
+
+    tx.commit()
+        .map_err(|e| SqlCipherOpenError::Backend(format!("commit open tx: {}", error_code(&e))))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "sqlcipher"))]
+fn error_code(e: &rusqlite::Error) -> String {
+    match e {
+        rusqlite::Error::SqliteFailure(s, _) => format!("{:?}", s.code),
+        _ => "rusqlite".to_owned(),
     }
 }
 
@@ -235,11 +299,12 @@ impl MetadataStore for SqlCipherMetadataStore {
         match result {
             Ok(_) => Ok(()),
             Err(rusqlite::Error::SqliteFailure(sqlite_err, _))
-                if sqlite_err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                if sqlite_err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
-                // The only UNIQUE we have is `vars.name`. The id-conflict
-                // path is handled by the ON CONFLICT clause above, so a
-                // ConstraintViolation here is a duplicate name.
+                // Narrow specifically to the UNIQUE constraint (extended
+                // code 2067). Other ConstraintViolation extended codes
+                // (CHECK, NOT NULL, future UNIQUEs) propagate as Backend
+                // so they cannot be silently mis-mapped to DuplicateName.
                 Err(MetadataError::DuplicateName(var.name().to_owned()))
             }
             Err(e) => Err(backend("upsert_var", &e)),
@@ -304,17 +369,26 @@ impl MetadataStore for SqlCipherMetadataStore {
 
     fn delete_var(&self, id: VarId) -> Result<(), MetadataError> {
         let mut conn = self.lock()?;
-        // FK ON DELETE CASCADE handles plain_values + project_vars, but only
-        // if FK enforcement is active (we enabled it in `open`). Run inside a
-        // transaction for atomic cascade per the trait contract.
+        // Explicit cascade: three DELETEs in one transaction. We do not rely
+        // solely on FK ON DELETE CASCADE because if `PRAGMA foreign_keys` is
+        // ever off, the cascade silently no-ops. Explicit deletes also keep
+        // the contract self-documenting at the call site.
         let tx = conn
             .transaction()
             .map_err(|e| backend("begin delete_var", &e))?;
+        let id_str = id.as_uuid().to_string();
         tx.execute(
-            "DELETE FROM vars WHERE id = ?1",
-            params![id.as_uuid().to_string()],
+            "DELETE FROM plain_values WHERE var_id = ?1",
+            params![id_str],
         )
-        .map_err(|e| backend("delete_var", &e))?;
+        .map_err(|e| backend("delete_var plain_values", &e))?;
+        tx.execute(
+            "DELETE FROM project_vars WHERE var_id = ?1",
+            params![id_str],
+        )
+        .map_err(|e| backend("delete_var project_vars", &e))?;
+        tx.execute("DELETE FROM vars WHERE id = ?1", params![id_str])
+            .map_err(|e| backend("delete_var", &e))?;
         tx.commit().map_err(|e| backend("commit delete_var", &e))?;
         Ok(())
     }
@@ -419,14 +493,18 @@ impl MetadataStore for SqlCipherMetadataStore {
 
     fn delete_project(&self, id: ProjectId) -> Result<(), MetadataError> {
         let mut conn = self.lock()?;
+        // Explicit cascade — see `delete_var` for the rationale.
         let tx = conn
             .transaction()
             .map_err(|e| backend("begin delete_project", &e))?;
+        let id_str = id.as_uuid().to_string();
         tx.execute(
-            "DELETE FROM projects WHERE id = ?1",
-            params![id.as_uuid().to_string()],
+            "DELETE FROM project_vars WHERE project_id = ?1",
+            params![id_str],
         )
-        .map_err(|e| backend("delete_project", &e))?;
+        .map_err(|e| backend("delete_project project_vars", &e))?;
+        tx.execute("DELETE FROM projects WHERE id = ?1", params![id_str])
+            .map_err(|e| backend("delete_project", &e))?;
         tx.commit()
             .map_err(|e| backend("commit delete_project", &e))?;
         Ok(())

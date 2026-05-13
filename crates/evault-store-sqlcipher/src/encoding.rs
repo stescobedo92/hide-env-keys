@@ -57,15 +57,18 @@ pub fn encode_group(group: &Group) -> String {
     }
 }
 
-pub fn decode_group(raw: &str) -> Group {
+pub fn decode_group(raw: &str) -> Result<Group, MetadataError> {
     match raw {
-        "user" => Group::User,
-        "system" => Group::System,
-        "project" => Group::Project,
-        other if other.starts_with("custom:") => Group::Custom(other[7..].to_owned()),
-        // Defensive fallback: unknown raw label is preserved as a Custom group
-        // rather than panicking. A future migration can normalize it.
-        other => Group::Custom(other.to_owned()),
+        "user" => Ok(Group::User),
+        "system" => Ok(Group::System),
+        "project" => Ok(Group::Project),
+        other if other.starts_with("custom:") => Ok(Group::Custom(other[7..].to_owned())),
+        // Unknown labels MUST surface loudly — silently coercing them to a
+        // `Custom` value would let a future schema's value (or a corrupt
+        // byte sequence) bypass the version check at the model layer.
+        other => Err(MetadataError::Backend(format!(
+            "unknown group label in storage: {other}"
+        ))),
     }
 }
 
@@ -105,7 +108,7 @@ pub fn row_to_var(row: &Row<'_>) -> Result<Var, MetadataError> {
     Var::try_from_parts(
         VarId::from_uuid(uuid),
         name,
-        decode_group(&group_raw),
+        decode_group(&group_raw)?,
         decode_kind(&kind_raw)?,
         decode_tags(&tags_raw)?,
         usize::try_from(length)
@@ -146,18 +149,23 @@ pub fn encode_action(action: &AuditAction) -> String {
     }
 }
 
-pub fn decode_action(raw: &str) -> AuditAction {
+pub fn decode_action(raw: &str) -> Result<AuditAction, MetadataError> {
     match raw {
-        "created" => AuditAction::Created,
-        "updated" => AuditAction::Updated,
-        "deleted" => AuditAction::Deleted,
-        "linked" => AuditAction::Linked,
-        "unlinked" => AuditAction::Unlinked,
-        "materialized" => AuditAction::Materialized,
-        "run" => AuditAction::Run,
-        "copied" => AuditAction::Copied,
-        other if other.starts_with("custom:") => AuditAction::Custom(other[7..].to_owned()),
-        other => AuditAction::Custom(other.to_owned()),
+        "created" => Ok(AuditAction::Created),
+        "updated" => Ok(AuditAction::Updated),
+        "deleted" => Ok(AuditAction::Deleted),
+        "linked" => Ok(AuditAction::Linked),
+        "unlinked" => Ok(AuditAction::Unlinked),
+        "materialized" => Ok(AuditAction::Materialized),
+        "run" => Ok(AuditAction::Run),
+        "copied" => Ok(AuditAction::Copied),
+        other if other.starts_with("custom:") => Ok(AuditAction::Custom(other[7..].to_owned())),
+        // Audit-log values from newer-schema writes (or tampered rows) must
+        // surface loudly: a silent coercion to `Custom("…")` would corrupt
+        // the forensic value of the audit log.
+        other => Err(MetadataError::Backend(format!(
+            "unknown audit action in storage: {other}"
+        ))),
     }
 }
 
@@ -170,7 +178,7 @@ pub fn row_to_audit_entry(row: &Row<'_>) -> Result<AuditEntry, MetadataError> {
     let at: String = row.get(5).map_err(|e| backend("row at", &e))?;
     Ok(AuditEntry::from_parts(
         AuditId::from_uuid(decode_uuid(&id)?),
-        decode_action(&action),
+        decode_action(&action)?,
         var_id
             .map(|s| decode_uuid(&s).map(VarId::from_uuid))
             .transpose()?,
