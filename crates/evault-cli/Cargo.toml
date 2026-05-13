@@ -23,7 +23,5 @@ evault-core = { path = "../evault-core", version = "0.1" }
 evault-store-memory = { path = "../evault-store-memory", version = "0.1" }
 evault-tui = { path = "../evault-tui", version = "0.1" }
 clap = { version = "4.5", features = ["derive"] }
-thiserror = "2.0"
-
-[dev-dependencies]
 secrecy = "0.10"
+thiserror = "2.0"

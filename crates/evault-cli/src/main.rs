@@ -38,6 +38,13 @@ const EXIT_UNIMPLEMENTED: u8 = 2;
                   in --help return exit code 2 and will be wired in phase 2."
 )]
 struct Cli {
+    /// Seed the in-memory backend with a handful of demo variables
+    /// so the TUI has something to interact with on a fresh launch.
+    /// Useful for kicking the tires (fuzzy filter, detail view,
+    /// delete modal) without scripting any setup.
+    #[arg(long, global = true)]
+    demo: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -101,7 +108,11 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command.unwrap_or(Command::Tui) {
         Command::Tui => {
-            let backend = InMemoryBackend::new();
+            let backend = if cli.demo {
+                InMemoryBackend::with_demo_data()
+            } else {
+                InMemoryBackend::new()
+            };
             evault_tui::run_tui(backend)?;
             Ok(())
         }

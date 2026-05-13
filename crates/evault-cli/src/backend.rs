@@ -53,6 +53,82 @@ impl InMemoryBackend {
     pub const fn registry(&self) -> &MemoryRegistry {
         &self.registry
     }
+
+    /// Construct a backend pre-populated with a handful of demo
+    /// variables so the TUI has something to interact with on a
+    /// fresh launch.
+    ///
+    /// Intended for `--demo` runs and CI smoke tests; production code
+    /// uses [`Self::new`]. The seed touches every kind / group / link
+    /// permutation the dashboard renders so manual testers see the
+    /// full palette without needing to script any setup.
+    ///
+    /// # Panics
+    /// Panics if any of the seed `create_var` calls fails — the
+    /// inputs are static and known-valid; a panic here means the
+    /// in-memory store impl regressed.
+    #[must_use]
+    #[allow(clippy::expect_used)]
+    pub fn with_demo_data() -> Self {
+        use evault_core::model::{Group, VarKind};
+        use secrecy::SecretString;
+
+        let backend = Self::new();
+        let seed: &[(&str, Group, VarKind, &str)] = &[
+            (
+                "DATABASE_URL",
+                Group::User,
+                VarKind::Secret,
+                "postgres://localhost:5432/dev",
+            ),
+            ("NODE_ENV", Group::User, VarKind::Plain, "development"),
+            ("API_KEY", Group::User, VarKind::Secret, "sk_live_abcdef"),
+            ("LOG_LEVEL", Group::User, VarKind::Plain, "info"),
+            (
+                "AWS_ACCESS_KEY_ID",
+                Group::System,
+                VarKind::Secret,
+                "AKIAEXAMPLE",
+            ),
+            (
+                "AWS_SECRET_ACCESS_KEY",
+                Group::System,
+                VarKind::Secret,
+                "wJalrXUtnFEMIxxK7MDENG",
+            ),
+            ("PORT", Group::Project, VarKind::Plain, "3000"),
+            (
+                "REDIS_URL",
+                Group::User,
+                VarKind::Secret,
+                "redis://localhost:6379",
+            ),
+            (
+                "FEATURE_FLAGS",
+                Group::Project,
+                VarKind::Plain,
+                "new_ui=on,beta_login=off",
+            ),
+            (
+                "SENTRY_DSN",
+                Group::User,
+                VarKind::Secret,
+                "https://abc@sentry.io/123",
+            ),
+        ];
+        for (name, group, kind, value) in seed {
+            backend
+                .registry
+                .create_var(
+                    name,
+                    group.clone(),
+                    *kind,
+                    SecretString::new((*value).to_owned().into()),
+                )
+                .expect("demo seed must succeed against an empty in-memory backend");
+        }
+        backend
+    }
 }
 
 impl Default for InMemoryBackend {
