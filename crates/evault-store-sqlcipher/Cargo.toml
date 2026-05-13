@@ -14,4 +14,21 @@ description = "SQLCipher-encrypted metadata store for evault."
 [lints]
 workspace = true
 
+[features]
+# Default: SQLite bundled, no encryption (file relies on OS-level
+# protection). Enable `sqlcipher` to switch to a SQLCipher-encrypted
+# database. SQLCipher requires OpenSSL to be available to the build
+# (Strawberry Perl on Windows, libssl on Linux/macOS).
+default = []
+sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+
 [dependencies]
+evault-core = { path = "../evault-core", version = "0.1" }
+rusqlite = { version = "0.39", features = ["bundled", "modern_sqlite"] }
+serde_json = "1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+uuid = "1.23"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3"
