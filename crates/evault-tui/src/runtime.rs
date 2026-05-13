@@ -125,7 +125,19 @@ fn event_loop<P: VarProvider + ?Sized>(
                     // error toast is sticky and survives further input.
                     match app.refresh(provider) {
                         Ok(()) => {
-                            app.set_info_toast(format!("refreshed ({} vars)", app.rows().len()));
+                            // When a filter is applied the dashboard
+                            // title reads `vars (matched/total)`. The
+                            // toast mirrors that format so a user with
+                            // an active filter does not see two
+                            // contradicting counts.
+                            let total = app.rows().len();
+                            let msg = if app.is_filter_active() {
+                                let matched = app.visible_row_indices().len();
+                                format!("refreshed ({matched}/{total} vars)")
+                            } else {
+                                format!("refreshed ({total} vars)")
+                            };
+                            app.set_info_toast(msg);
                         }
                         Err(e) => app.set_error_toast(e.to_string()),
                     }

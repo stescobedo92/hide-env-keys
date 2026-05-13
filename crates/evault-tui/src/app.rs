@@ -166,6 +166,14 @@ impl AppState {
     }
 
     fn dispatch_filter_input_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        // Mirror `apply()`'s contract: any active interaction in the
+        // filter input clears a stale info toast so the user never
+        // sees a "refreshed (5 vars)" sitting on screen while they
+        // type a needle that contradicts it. Error toasts remain
+        // sticky and survive — same policy as the Action path.
+        if !self.toast_is_error() {
+            self.toast = None;
+        }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             // Universal exit gesture remains bound.
@@ -254,16 +262,24 @@ impl AppState {
     /// Open the fuzzy filter overlay. If a filter is already active
     /// the input box is re-opened so the user can keep typing without
     /// losing the existing needle.
+    /// Open the fuzzy filter overlay.
+    ///
+    /// If a filter is already applied, the input box is re-opened so
+    /// the user can continue editing the existing needle. The cursor
+    /// position is **preserved** in both first-open and re-open paths
+    /// so the user's mental "what is selected" pointer survives a
+    /// roundtrip through the input.
     pub fn open_filter(&mut self) {
         if let Some(filter) = self.filter.as_mut() {
             filter.reopen_input();
             return;
         }
         self.filter = Some(FilterState::new(self.rows.len()));
-        // Reset cursor to top of the filtered view so the user
-        // doesn't "see" an offset from the previous selection.
-        self.table_state
-            .select(if self.rows.is_empty() { None } else { Some(0) });
+        // The fresh `FilterState` already matches all rows in original
+        // order, and the visible row count is unchanged, so the
+        // existing selection index remains valid. Clamp defensively
+        // in case the dashboard was empty.
+        self.clamp_selection();
     }
 
     /// Clear the filter and restore the full row set.
@@ -291,32 +307,27 @@ impl AppState {
     /// Re-rank the existing filter against the (possibly changed) row
     /// buffer. Called from [`Self::refresh`]; no-op when no filter is
     /// active.
+    ///
+    /// `FilterState::rerank` is pure in `(needle, haystacks)`, so
+    /// replaying the needle char-by-char against the new haystacks
+    /// produces the same ranking that live typing would. We rebuild
+    /// rather than expose a public rerank to keep `FilterState`'s
+    /// surface minimal.
     fn rebuild_filter(&mut self) {
-        if self.filter.is_none() {
+        let Some(filter) = self.filter.as_mut() else {
             return;
-        }
+        };
+        let needle = filter.needle().to_owned();
+        let input_active = filter.input_active();
         let haystacks: Vec<&str> = self.rows.iter().map(|v| v.name.as_str()).collect();
-        if let Some(filter) = self.filter.as_mut() {
-            // Rerank: pop+push a no-op character would corrupt the
-            // needle. Easier to reach into the filter and rebuild
-            // directly via the same code path push/pop use. Since we
-            // don't have a public rerank, simulate by popping then
-            // pushing the trailing character if any. For simplicity,
-            // we instead drop and rebuild the FilterState if rows
-            // changed shape.
-            //
-            // Cheaper path: re-rank with the current needle.
-            let needle = filter.needle().to_owned();
-            let input_active = filter.input_active();
-            let mut fresh = FilterState::new(self.rows.len());
-            for c in needle.chars() {
-                fresh.push(c, &haystacks);
-            }
-            if !input_active {
-                fresh.commit();
-            }
-            *filter = fresh;
+        let mut fresh = FilterState::new(self.rows.len());
+        for c in needle.chars() {
+            fresh.push(c, &haystacks);
         }
+        if !input_active {
+            fresh.commit();
+        }
+        *filter = fresh;
     }
 
     /// Set an informational toast (auto-dismissed on the next action).
@@ -454,11 +465,15 @@ impl AppState {
     }
 
     fn dismiss(&mut self) {
-        // Cascade: toast → overlay → quit. A sticky error toast must
-        // be cleared first so users have a way to acknowledge it
-        // without leaving the app.
+        // Cascade: toast → filter → overlay → quit. Each level is
+        // dismissed in turn so the user has a predictable Esc path
+        // back to the dashboard root before the app exits.
         if self.toast.is_some() {
             self.toast = None;
+            return;
+        }
+        if self.is_filter_active() {
+            self.close_filter();
             return;
         }
         if matches!(self.overlay, Overlay::Help) {
@@ -884,6 +899,47 @@ mod tests {
         app.refresh(&five_rows()).unwrap();
         let outcome = app.dispatch_key(press(KeyCode::Char('r')));
         assert_eq!(outcome, DispatchOutcome::RefreshRequested);
+    }
+
+    #[test]
+    fn dismiss_closes_an_active_filter_before_overlay_or_quit() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        // Open + commit the filter so input is no longer active.
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('d')));
+        app.dispatch_key(press(KeyCode::Enter));
+        assert!(app.is_filter_active());
+        // Esc with a committed filter must close the filter, NOT quit.
+        app.apply(Action::Dismiss);
+        assert!(!app.is_filter_active());
+        assert!(!app.quit_requested());
+        // A second Esc with no overlay/filter quits.
+        app.apply(Action::Dismiss);
+        assert!(app.quit_requested());
+    }
+
+    #[test]
+    fn typing_in_filter_input_clears_pre_existing_info_toast() {
+        // Regression: previously the filter-input path never touched
+        // the toast, so a stale "refreshed (5 vars)" sat on screen
+        // while the user typed a needle that contradicted it.
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.set_info_toast("refreshed (5 vars)");
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('d')));
+        assert!(app.toast_text().is_none());
+    }
+
+    #[test]
+    fn typing_in_filter_input_preserves_error_toasts() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.set_error_toast("backend failure");
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('d')));
+        assert_eq!(app.toast_text(), Some("backend failure"));
     }
 
     #[test]

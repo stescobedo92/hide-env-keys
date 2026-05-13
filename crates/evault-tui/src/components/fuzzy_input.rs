@@ -30,7 +30,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     let hint = if app.is_filter_input_active() {
         Span::styled("  (Esc cancel · Enter accept)", theme.dim_cell())
     } else {
-        Span::styled("  (Ctrl+F to edit · Esc clears)", theme.dim_cell())
+        // After commit, Esc still clears the filter — the `dismiss`
+        // cascade in `AppState` handles "filter → overlay → quit" in
+        // that order, so a single Esc returns the user to the
+        // unfiltered dashboard.
+        Span::styled("  (Ctrl+F to edit · Esc clears filter)", theme.dim_cell())
     };
     let line = Line::from(vec![prompt, needle_span, cursor_span, hint]);
     frame.render_widget(Paragraph::new(line), area);
