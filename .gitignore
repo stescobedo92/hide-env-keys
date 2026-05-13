@@ -1,0 +1,50 @@
+# Build artifacts
+/target
+**/target/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment files (managed by evault, never commit)
+.env
+.env.*
+!.env.example
+!evault.toml.example
+
+# Local state and caches
+.evault/
+
+# Logs
+*.log
+
+# OpenSpec (per user policy — never commit)
+openspec/
+
+# Claude Code local config (per-user, not project)
+.claude/
+
+# Plan files
+.plans/
+
+# npm
+node_modules/
+npm/dist/
+
+# Misc
+*.bak
+*.tmp
+*.orig
+
+# Coverage
+*.profraw
+*.lcov
+tarpaulin-report.html

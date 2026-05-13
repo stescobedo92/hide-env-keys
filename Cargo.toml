@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/evault-core",
+    "crates/evault-store-sqlcipher",
+    "crates/evault-store-keyring",
+    "crates/evault-store-memory",
+    "crates/evault-manifest",
+    "crates/evault-scanner-regex",
+    "crates/evault-materializer",
+    "crates/evault-runner",
+    "crates/evault-tui",
+    "crates/evault-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+license = "MIT"
+authors = ["Sergio Triana Escobedo <stescobedo.31@gmail.com>"]
+repository = "https://github.com/stescobedo/hide-env-keys"
+homepage = "https://github.com/stescobedo/hide-env-keys"
+description = "Secure cross-platform TUI for managing environment variables."
+keywords = ["env", "tui", "secrets", "dotenv", "vault"]
+categories = ["command-line-utilities", "config", "cryptography"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+missing_safety_doc = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
+debug = false
