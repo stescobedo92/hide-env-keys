@@ -91,10 +91,20 @@ pub fn language_specs() -> Vec<LanguageSpec> {
         LanguageSpec {
             extensions: &["sh", "bash"],
             patterns: vec![
-                // ${NAME} or ${NAME:-default}. We anchor with `${`
-                // explicitly so a `$()` command substitution doesn't
-                // match.
-                compile(&format!(r"\$\{{(?P<name>{IDENT})[:}}]")),
+                // ${NAME} and its parameter-expansion variants. We
+                // anchor with `${` explicitly so `$()` command
+                // substitution doesn't match. The terminator class
+                // covers every standard bash parameter-expansion form:
+                //   `}`  bare       — `${VAR}`
+                //   `:`  defaults   — `${VAR:-x}`, `${VAR:+x}`, `${VAR:?x}`, `${VAR:o:l}`
+                //   `#`  prefix     — `${VAR#x}`, `${VAR##x}`, `${#VAR}` (length is captured too)
+                //   `%`  suffix     — `${VAR%x}`, `${VAR%%x}`
+                //   `^`  upper case — `${VAR^}`, `${VAR^^}`
+                //   `,`  lower case — `${VAR,}`, `${VAR,,}`
+                //   `/`  substitute — `${VAR/from/to}`
+                //   `!`  indirect   — `${!VAR}` (read as a hit on VAR)
+                //   `[`  array idx  — `${VAR[0]}`
+                compile(&format!(r"\$\{{(?P<name>{IDENT})[:}}#%^,/!\[]")),
                 // Bare $NAME at a word boundary. We require uppercase
                 // identifier to keep `$foo` from matching.
                 compile(&format!(r"\$(?P<name>{IDENT})\b")),
@@ -240,5 +250,36 @@ mod tests {
         );
         // Lowercase rejected.
         assert!(capture_name(&sh[1], "echo $foo").is_none());
+    }
+
+    /// Every standard bash parameter-expansion terminator should be
+    /// matched. These previously fell through `${VAR}` only, causing
+    /// silent undercount on shell scripts using prefix/suffix/case
+    /// operators.
+    #[test]
+    fn shell_brace_recognises_all_parameter_expansion_forms() {
+        let specs = language_specs();
+        let sh = &specs
+            .iter()
+            .find(|s| s.extensions.contains(&"sh"))
+            .unwrap()
+            .patterns;
+        let cases = [
+            ("echo ${PATH#prefix}", "PATH"),
+            ("echo ${PATH##prefix}", "PATH"),
+            ("echo ${VAR%suffix}", "VAR"),
+            ("echo ${VAR%%suffix}", "VAR"),
+            ("echo ${VAR^^}", "VAR"),
+            ("echo ${VAR,,}", "VAR"),
+            ("echo ${VAR/from/to}", "VAR"),
+            ("echo ${VAR[0]}", "VAR"),
+        ];
+        for (haystack, expected) in cases {
+            assert_eq!(
+                capture_name(&sh[0], haystack).as_deref(),
+                Some(expected),
+                "missed: {haystack}"
+            );
+        }
     }
 }

@@ -19,7 +19,19 @@
 //!
 //! Files whose contents are not valid UTF-8 are silently skipped (per
 //! the trait contract). I/O failures while walking the tree propagate
-//! as [`ScannerError::Io`](evault_core::error::ScannerError::Io).
+//! as [`ScannerError::Io`](evault_core::error::ScannerError::Io) with
+//! the offending path included in the error message.
+//!
+//! # Limitations
+//!
+//! - The scanner is *line-oriented*, not language-aware: hits inside
+//!   comments and string literals are reported.
+//! - Lines split on `\n` and `\r\n`; legacy bare-`\r` files collapse
+//!   into a single line.
+//! - Single-quoted shell strings are not honored (`echo '$FOO'`
+//!   produces a hit).
+//!
+//! See [`RegexCodeScanner`] for the full list.
 //!
 //! # Examples
 //!

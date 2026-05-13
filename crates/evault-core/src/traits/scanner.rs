@@ -10,8 +10,16 @@ pub struct ScanHit {
     /// File the reference was found in.
     pub path: PathBuf,
     /// 1-based line number of the reference.
+    ///
+    /// Lines are split on `\n` and `\r\n`. Files that use only bare `\r`
+    /// line endings (legacy Mac OS Classic) are treated as a single line;
+    /// implementations should document this in their own docs if relevant.
     pub line: usize,
-    /// 1-based column number where the reference begins.
+    /// 1-based **character** column where the reference begins (Unicode
+    /// scalar values, not bytes). Editors universally count columns in
+    /// characters, so a hit at column `N` lands where a user clicking
+    /// `goto N` would expect, even if the line contains multi-byte UTF-8
+    /// before the match.
     pub column: usize,
     /// Variable name as it appears in the code (e.g. `DATABASE_URL`).
     pub name: String,
