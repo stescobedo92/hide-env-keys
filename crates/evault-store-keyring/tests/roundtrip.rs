@@ -121,6 +121,14 @@ fn delete_then_get_returns_none() {
 }
 
 #[test]
+fn with_service_rejects_empty_string() {
+    match OsKeyringSecretStore::with_service("") {
+        Err(SecretError::Backend(label)) => assert_eq!(label, "empty_service"),
+        other => panic!("expected Backend(\"empty_service\"), got {other:?}"),
+    }
+}
+
+#[test]
 fn distinct_ids_isolate_secrets() {
     let Some(store) = try_store("distinct_ids") else {
         return;

@@ -24,6 +24,24 @@
 //! - `put` always either writes or returns an error — it never silently
 //!   fails.
 //!
+//! # Operational notes
+//!
+//! - **Single backend per process.** `keyring 4.x` keeps a single
+//!   process-wide active backend (`use_native_store`, `use_named_store`,
+//!   `release_store`). This crate initialises it once via
+//!   [`std::sync::OnceLock`]. **Do not** call any of those keyring-crate
+//!   functions yourself in the same process — a host that swaps the
+//!   backend later may route subsequent operations to an in-memory
+//!   `sample` store that does not persist.
+//! - **`Backend("ambiguous")` is a security signal.** Because every
+//!   variable lives at a fixed `("evault", <uuid>)` pair, an
+//!   ambiguity error means another application is writing to the same
+//!   namespace. Treat it as tampering, not as a routine backend error.
+//! - **Init result is sticky.** If the first call fails (e.g. the user
+//!   hasn't started gnome-keyring yet), subsequent calls in the same
+//!   process see the cached failure. A CLI re-launch starts fresh; a
+//!   daemon would need a future "reset" hook.
+//!
 //! # Examples
 //!
 //! ```ignore

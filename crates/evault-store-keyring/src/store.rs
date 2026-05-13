@@ -60,12 +60,18 @@ impl OsKeyringSecretStore {
     /// Useful for tests that need to isolate from any production data.
     ///
     /// # Errors
-    /// Same as [`Self::new`].
+    /// Returns [`SecretError::Backend`] with label `"empty_service"` if
+    /// the service identifier is empty (platform behaviour for the empty
+    /// case is inconsistent — Windows DPAPI accepts it, Linux Secret
+    /// Service may reject it, macOS Keychain may silently accept). The
+    /// remaining error cases are the same as [`Self::new`].
     pub fn with_service(service: impl Into<String>) -> Result<Self, SecretError> {
+        let service = service.into();
+        if service.is_empty() {
+            return Err(SecretError::Backend("empty_service".into()));
+        }
         ensure_native_backend()?;
-        Ok(Self {
-            service: service.into(),
-        })
+        Ok(Self { service })
     }
 
     fn entry(&self, id: VarId) -> Result<Entry, SecretError> {

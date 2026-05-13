@@ -34,6 +34,11 @@ pub fn map(e: keyring_core::Error) -> SecretError {
 /// Stable category label for a `keyring_core::Error`. Never embeds raw
 /// platform strings; the `keyring_core::Error` `Display` impl can include
 /// service names or D-Bus error text on some platforms.
+///
+/// Every variant in `keyring-core 1.0` is enumerated so production
+/// telemetry can distinguish e.g. "blob corrupted" from "init didn't
+/// take effect" from "platform refused the operation". The `_` arm
+/// remains for future additions under the enum's `#[non_exhaustive]`.
 const fn label(e: &keyring_core::Error) -> &'static str {
     use keyring_core::Error;
     match e {
@@ -44,6 +49,15 @@ const fn label(e: &keyring_core::Error) -> &'static str {
         Error::PlatformFailure(_) => "platform_failure",
         Error::BadEncoding(_) => "bad_encoding",
         Error::TooLong(_, _) => "too_long",
+        Error::BadDataFormat(_, _) => "bad_data_format",
+        Error::BadStoreFormat(_) => "bad_store_format",
+        Error::NoDefaultStore => "no_default_store",
+        Error::NotSupportedByStore(_) => "not_supported_by_store",
+        // NOTE: `keyring_core::Error` is `#[non_exhaustive]`. Re-audit
+        // this match on every `keyring-core` bump. In particular, a
+        // future "access denied", "locked", or "user cancelled" variant
+        // should route to `SecretError::Unavailable` in `map()` above,
+        // not fall through here.
         _ => "other",
     }
 }
