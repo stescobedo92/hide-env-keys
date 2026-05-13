@@ -1,12 +1,13 @@
 //! Terminal lifecycle and event loop.
 
 use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
 
-use crate::app::{AppState, DispatchOutcome};
+use crate::app::{AppState, DispatchOutcome, View};
 use crate::error::TuiError;
 use crate::provider::{VarMutator, VarProvider};
 use crate::theme::Theme;
@@ -158,24 +159,53 @@ where
                 }
                 DispatchOutcome::DeleteRequested { id, name } => {
                     // Side-effect at the runtime boundary that owns
-                    // the backend. On success we *first* return to
-                    // dashboard if the user was inspecting this very
-                    // row (otherwise refresh's stale-target guard
-                    // would surface a misleading "removed elsewhere"
-                    // toast), then refresh, then toast the success
-                    // message — toast comes last so the user sees the
-                    // explicit confirmation rather than the generic
-                    // refresh banner.
-                    match backend.delete(id) {
-                        Ok(()) => {
-                            app.return_to_dashboard();
-                            if let Err(e) = app.refresh(backend) {
-                                app.set_error_toast(format!("delete ok, but refresh failed: {e}"));
-                            } else {
-                                app.set_info_toast(format!("deleted `{name}`"));
+                    // the backend. We guard against three failure
+                    // modes:
+                    //
+                    // 1. The backend's `delete` panics — without a
+                    //    `catch_unwind` the panic hook would tear
+                    //    the terminal down with no actionable toast
+                    //    for the user. We wrap the call and surface
+                    //    the panic as an error toast instead.
+                    // 2. `delete` returns `Err` — surfaced verbatim.
+                    // 3. `delete` succeeds but `refresh` fails:
+                    //    locally splice the deleted row out so the
+                    //    dashboard does not show a ghost entry that
+                    //    would re-fire on a second `d` keypress.
+                    //
+                    // On the happy path we return to Dashboard *only*
+                    // if the user was inspecting the deleted row;
+                    // refresh's stale-target guard would otherwise
+                    // surface "removed elsewhere" for a self-initiated
+                    // delete (a lie).
+                    let delete_result =
+                        panic::catch_unwind(AssertUnwindSafe(|| backend.delete(id)));
+                    match delete_result {
+                        Err(_) => {
+                            app.set_error_toast("delete crashed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("delete failed: {e}"));
+                        }
+                        Ok(Ok(())) => {
+                            if matches!(app.current_view(), View::Detail) {
+                                app.return_to_dashboard();
+                            }
+                            match app.refresh(backend) {
+                                Ok(()) => {
+                                    app.set_info_toast(format!("deleted `{name}`"));
+                                }
+                                Err(e) => {
+                                    // Refresh failed — splice the
+                                    // deleted row out so the user
+                                    // doesn't see a ghost.
+                                    app.splice_out_row(id);
+                                    app.set_error_toast(format!(
+                                        "deleted `{name}` but refresh failed: {e}"
+                                    ));
+                                }
                             }
                         }
-                        Err(e) => app.set_error_toast(format!("delete failed: {e}")),
                     }
                 }
             },

@@ -277,6 +277,16 @@ impl AppState {
             return DispatchOutcome::Continue;
         };
         if reject {
+            // Cascade the dismissal: if the user opened help and then
+            // raised a modal, an Esc press should back them out of
+            // *both* layers in one go rather than leaving help still
+            // visible. The user opened help BEFORE the modal (modals
+            // steal focus so `?` cannot reach the Action path), so
+            // closing it here matches the "Esc means back to the
+            // dashboard root" invariant.
+            if matches!(self.overlay, Overlay::Help) {
+                self.overlay = Overlay::None;
+            }
             return DispatchOutcome::Continue;
         }
         match req.action {
@@ -441,12 +451,45 @@ impl AppState {
         self.detail_target = None;
     }
 
+    /// Splice the given variable id out of the row buffer locally
+    /// without going through the provider.
+    ///
+    /// Used by the runtime when a `delete` succeeded but the
+    /// subsequent `refresh` failed: keeping the deleted row visible
+    /// would let the user press `d` a second time on a ghost entry,
+    /// producing a confusing `NotFound` error or a "deleted twice"
+    /// success. Splicing locally restores the user's mental model.
+    ///
+    /// No-op if the id is not in the buffer. Re-ranks any active
+    /// filter and clamps the selection cursor.
+    pub fn splice_out_row(&mut self, id: VarId) {
+        let before = self.rows.len();
+        self.rows.retain(|v| v.id != id);
+        if self.rows.len() == before {
+            return;
+        }
+        self.rebuild_filter();
+        self.clamp_selection();
+        // If the user was inspecting the just-spliced variable,
+        // return to the dashboard so the detail target does not
+        // dangle.
+        if self.detail_target == Some(id) {
+            self.return_to_dashboard();
+        }
+    }
+
     /// Raise a confirmation modal for deleting the currently-targeted
     /// variable (the selected row on the Dashboard, or
     /// [`Self::detail_row`] when on Detail). Surfaces an info toast
     /// instead if there is no target — without clobbering a sticky
     /// error toast.
     fn request_delete_confirmation(&mut self) {
+        debug_assert!(
+            self.confirm.is_none(),
+            "request_delete_confirmation called with a focused modal — \
+             dispatch_key routes confirm-mode keys to dispatch_confirm_key \
+             before any Action::DeleteVar can reach here"
+        );
         let target = match self.view {
             View::Dashboard => self.selected_row(),
             View::Detail => self.detail_row(),
@@ -1462,6 +1505,86 @@ mod tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         app.dispatch_key(ctrl_c);
         assert!(app.quit_requested());
+    }
+
+    #[test]
+    fn modal_plain_c_does_not_quit_or_dismiss() {
+        // Regression: only Ctrl-C exits the modal; a plain `c`
+        // keystroke is an unrecognised input that must leave the
+        // modal focused.
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        app.dispatch_key(press(KeyCode::Char('c')));
+        assert!(app.is_confirm_visible());
+        assert!(!app.quit_requested());
+    }
+
+    #[test]
+    fn modal_reject_also_closes_help_overlay() {
+        // The modal steals focus from `?`, so help can only be open
+        // BEFORE the modal is raised. Rejecting the modal with Esc
+        // should cascade and close help too — otherwise the user
+        // sees nothing visible change when they hit Esc the first
+        // time (modal disappears but help still covers everything).
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::ToggleHelp);
+        assert!(app.help_visible());
+        app.apply(Action::DeleteVar);
+        assert!(app.is_confirm_visible());
+        app.dispatch_key(press(KeyCode::Esc));
+        assert!(!app.is_confirm_visible());
+        assert!(!app.help_visible(), "Esc cascade must close help too");
+    }
+
+    #[test]
+    fn splice_out_row_removes_local_entry_and_rebuilds_filter() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        // Snapshot the API_KEY id.
+        app.apply(Action::MoveDown);
+        let target_id = app.selected_row().expect("selection").id;
+
+        // Apply a filter that matches `target_id` so we can confirm
+        // the filter buffer is also re-ranked after the splice.
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('a')));
+        let before = app.visible_rows().count();
+        assert!(before >= 1);
+
+        app.splice_out_row(target_id);
+        assert!(app.rows().iter().all(|v| v.id != target_id));
+        assert!(app.visible_rows().count() < before);
+    }
+
+    #[test]
+    fn splice_out_row_on_inspected_var_returns_to_dashboard() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::MoveDown);
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Detail);
+
+        app.splice_out_row(target_id);
+        assert_eq!(
+            app.current_view(),
+            View::Dashboard,
+            "splice of the inspected var must return to dashboard"
+        );
+        assert!(app.detail_row().is_none());
+    }
+
+    #[test]
+    fn splice_out_row_on_unknown_id_is_a_noop() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        let before = app.rows().len();
+        // Random VarId — must not be one of the five we just loaded.
+        let bogus = VarId::new_v4();
+        app.splice_out_row(bogus);
+        assert_eq!(app.rows().len(), before);
     }
 
     #[test]

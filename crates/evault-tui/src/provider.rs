@@ -82,6 +82,20 @@ pub trait VarProvider: Send + Sync {
 pub trait VarMutator: Send + Sync {
     /// Delete the variable with the given id.
     ///
+    /// # Performance contract
+    ///
+    /// Implementations **must** return promptly — target ≤ 100 ms,
+    /// never more than ≈ 1 s. The TUI calls `delete` synchronously
+    /// inside the event loop: a slow implementation will freeze the
+    /// UI and prevent `Ctrl-C` from being handled until the call
+    /// returns. **Do not** perform network I/O or block on
+    /// user-facing prompts (OS keyring access counts — wrap it with a
+    /// timeout). Phase 3 will move mutator calls onto a worker
+    /// thread; until then, treat synchronous responsiveness as part
+    /// of the API contract.
+    ///
+    /// # Idempotency
+    ///
     /// Implementations should make the call idempotent if at all
     /// possible: re-deleting an already-absent variable should not
     /// fail. The TUI refreshes its row buffer after every successful
