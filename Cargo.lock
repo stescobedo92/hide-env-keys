@@ -1084,6 +1084,10 @@ dependencies = [
 [[package]]
 name = "evault-materializer"
 version = "0.1.0"
+dependencies = [
+ "evault-core",
+ "tempfile",
+]
 
 [[package]]
 name = "evault-runner"

@@ -15,3 +15,7 @@ description = "Materializes .env files from an evault manifest."
 workspace = true
 
 [dependencies]
+evault-core = { path = "../evault-core", version = "0.1" }
+
+[dev-dependencies]
+tempfile = "3"
