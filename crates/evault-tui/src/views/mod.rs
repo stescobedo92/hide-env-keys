@@ -1,12 +1,13 @@
 //! Top-level views composed by the runtime.
 
 pub mod dashboard;
+pub mod detail;
 pub mod help;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
-use crate::app::AppState;
+use crate::app::{AppState, View};
 use crate::components::{fuzzy_input, statusbar, toast};
 use crate::theme::Theme;
 
@@ -44,7 +45,10 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
         return;
     };
 
-    dashboard::render(frame, body, app, theme);
+    match app.current_view() {
+        View::Dashboard => dashboard::render(frame, body, app, theme),
+        View::Detail => detail::render(frame, body, app, theme),
+    }
     statusbar::render(frame, status, app, theme);
 
     // Optional rows are indexed positionally based on which flags

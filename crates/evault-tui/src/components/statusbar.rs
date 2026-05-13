@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::AppState;
+use crate::app::{AppState, View};
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) {
@@ -18,14 +18,20 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     } else {
         "masked"
     };
+    let view_name = match app.current_view() {
+        View::Dashboard => "dashboard",
+        View::Detail => "detail",
+    };
 
     let line = Line::from(vec![
         Span::styled(" evault ", key_style),
-        Span::styled("• ", dim),
+        Span::styled("\u{2022} ", dim),
+        Span::styled(format!("{view_name} "), dim),
+        Span::styled("\u{2022} ", dim),
         Span::styled(format!("rows: {} ", app.rows().len()), dim),
-        Span::styled("• ", dim),
+        Span::styled("\u{2022} ", dim),
         Span::styled(format!("secrets: {secrets_marker} "), dim),
-        Span::styled("• ", dim),
+        Span::styled("\u{2022} ", dim),
         Span::styled("? help  ", dim),
         Span::styled("q quit", dim),
     ]);

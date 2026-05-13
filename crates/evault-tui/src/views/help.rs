@@ -23,7 +23,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         ("G", "jump to bottom"),
         ("PgDn", "page down"),
         ("PgUp", "page up"),
-        ("Enter", "open detail"),
+        ("Enter", "open detail view (Esc returns)"),
         ("n", "new variable"),
         ("e", "edit variable"),
         ("d", "delete (with confirm)"),

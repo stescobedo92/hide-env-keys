@@ -51,7 +51,7 @@ mod runtime;
 mod theme;
 mod views;
 
-pub use app::{AppState, DispatchOutcome};
+pub use app::{AppState, DispatchOutcome, View};
 pub use error::TuiError;
 pub use event::Action;
 pub use provider::{ProviderError, VarProvider, VarSummary};

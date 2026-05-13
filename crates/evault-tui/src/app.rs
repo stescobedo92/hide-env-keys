@@ -47,6 +47,20 @@ enum Overlay {
     Help,
 }
 
+/// Top-level view currently displayed by the runtime.
+///
+/// Views are mutually exclusive: at any moment the dashboard is
+/// either showing the table or the per-variable detail screen, not
+/// both. Overlays (help, modals) layer on top of *either* view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// Variable list — the default screen.
+    Dashboard,
+    /// Read-only inspection of the row that was selected when the
+    /// user pressed Enter.
+    Detail,
+}
+
 /// Dashboard state.
 ///
 /// `AppState` is a pure value: every public method is a function of
@@ -62,6 +76,7 @@ pub struct AppState {
     secrets_visible: bool,
     quit: bool,
     filter: Option<FilterState>,
+    view: View,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
@@ -103,6 +118,7 @@ impl AppState {
             secrets_visible: false,
             quit: false,
             filter: None,
+            view: View::Dashboard,
         }
     }
 
@@ -242,12 +258,12 @@ impl AppState {
                 self.toast = None;
             }
             Action::StartFuzzy => self.open_filter(),
+            Action::OpenDetail => self.open_detail(),
             Action::Noop => {}
-            // Phase-1 surfaces: not yet wired to a registry. We surface
+            // Phase-2c surfaces: not yet wired to a registry. We surface
             // a toast so the user knows the key was *received* but the
             // operation is not yet implemented.
-            Action::OpenDetail
-            | Action::NewVar
+            Action::NewVar
             | Action::EditVar
             | Action::DeleteVar
             | Action::LinkVar
@@ -286,6 +302,24 @@ impl AppState {
     pub fn close_filter(&mut self) {
         self.filter = None;
         self.clamp_selection();
+    }
+
+    /// Switch to [`View::Detail`] for the currently-selected row.
+    ///
+    /// If no row is selected (empty dashboard, or no rows match the
+    /// filter) the call is a no-op aside from surfacing a brief
+    /// "no row selected" toast.
+    pub fn open_detail(&mut self) {
+        if self.selected_row().is_some() {
+            self.view = View::Detail;
+        } else {
+            self.set_info_toast("no row selected");
+        }
+    }
+
+    /// Return to the dashboard from any other view.
+    pub const fn return_to_dashboard(&mut self) {
+        self.view = View::Dashboard;
     }
 
     fn filter_push(&mut self, c: char) {
@@ -448,6 +482,12 @@ impl AppState {
         self.secrets_visible
     }
 
+    /// Top-level view currently displayed.
+    #[must_use]
+    pub const fn current_view(&self) -> View {
+        self.view
+    }
+
     /// The currently-displayed toast text, if any.
     #[must_use]
     pub fn toast_text(&self) -> Option<&str> {
@@ -465,15 +505,21 @@ impl AppState {
     }
 
     fn dismiss(&mut self) {
-        // Cascade: toast → filter → overlay → quit. Each level is
-        // dismissed in turn so the user has a predictable Esc path
-        // back to the dashboard root before the app exits.
+        // Cascade: toast → filter → secondary view → overlay → quit.
+        // Each level is dismissed in turn so the user has a
+        // predictable Esc path back to the dashboard root before the
+        // app exits. Modals and similar focus-stealing overlays will
+        // be inserted ahead of `toast` in subsequent phases.
         if self.toast.is_some() {
             self.toast = None;
             return;
         }
         if self.is_filter_active() {
             self.close_filter();
+            return;
+        }
+        if !matches!(self.view, View::Dashboard) {
+            self.view = View::Dashboard;
             return;
         }
         if matches!(self.overlay, Overlay::Help) {
@@ -940,6 +986,86 @@ mod tests {
         app.apply(Action::StartFuzzy);
         app.dispatch_key(press(KeyCode::Char('d')));
         assert_eq!(app.toast_text(), Some("backend failure"));
+    }
+
+    // ─── Phase 2b1: detail view ───────────────────────────────────
+
+    #[test]
+    fn open_detail_switches_view_when_a_row_is_selected() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        assert_eq!(app.current_view(), View::Dashboard);
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Detail);
+    }
+
+    #[test]
+    fn open_detail_on_empty_dashboard_keeps_view_and_toasts() {
+        let mut app = AppState::new();
+        app.refresh(&StaticProvider(Vec::new())).unwrap();
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Dashboard);
+        assert_eq!(app.toast_text(), Some("no row selected"));
+    }
+
+    #[test]
+    fn dismiss_returns_from_detail_to_dashboard() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::OpenDetail);
+        assert_eq!(app.current_view(), View::Detail);
+        app.apply(Action::Dismiss);
+        assert_eq!(app.current_view(), View::Dashboard);
+        assert!(!app.quit_requested());
+    }
+
+    #[test]
+    fn detail_view_survives_secret_toggle_and_help_open() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::OpenDetail);
+        // Action applied while on Detail view should not auto-return.
+        app.apply(Action::ToggleSecretVisibility);
+        assert_eq!(app.current_view(), View::Detail);
+        assert!(app.secrets_visible());
+        app.apply(Action::ToggleHelp);
+        assert!(app.help_visible());
+        assert_eq!(app.current_view(), View::Detail);
+    }
+
+    #[test]
+    fn dismiss_cascade_priority_is_toast_filter_view_overlay() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        // Build a stacked context: filter committed, view = Detail,
+        // overlay = Help, plus an ERROR toast on top (info toasts
+        // would auto-clear before the dismiss cascade and merge two
+        // steps into one — error toasts are sticky and exercise the
+        // explicit-toast-dismiss step on its own).
+        app.apply(Action::ToggleHelp);
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('a')));
+        app.dispatch_key(press(KeyCode::Enter));
+        app.apply(Action::OpenDetail);
+        app.set_error_toast("scratch");
+        // 1) toast first
+        app.apply(Action::Dismiss);
+        assert!(app.toast_text().is_none());
+        assert!(app.is_filter_active());
+        // 2) filter
+        app.apply(Action::Dismiss);
+        assert!(!app.is_filter_active());
+        assert_eq!(app.current_view(), View::Detail);
+        // 3) view (back to dashboard)
+        app.apply(Action::Dismiss);
+        assert_eq!(app.current_view(), View::Dashboard);
+        assert!(app.help_visible());
+        // 4) overlay (help)
+        app.apply(Action::Dismiss);
+        assert!(!app.help_visible());
+        // 5) finally quit
+        app.apply(Action::Dismiss);
+        assert!(app.quit_requested());
     }
 
     #[test]
