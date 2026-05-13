@@ -70,14 +70,15 @@ impl VarProvider for InMemoryBackend {
 
         let mut summaries = Vec::with_capacity(vars.len());
         for var in vars {
-            // `links_for_var` failures are surfaced verbatim — the
-            // TUI will toast them. We could fall back to `0` and
-            // hide the issue, but silent-failure-hunter would
-            // (rightly) flag that.
-            let links = self
-                .registry
-                .links_for_var(var.id())
-                .map_err(|e| core_to_provider(&e))?;
+            // `links_for_var` failures wrap the offending var name so
+            // a future N+1 failure points at the actual row instead
+            // of a generic "backend error". The wrapping format is
+            // `links for NAME: <chain>` — the chain itself already
+            // carries `: source: source...` via `core_to_provider`.
+            let links = self.registry.links_for_var(var.id()).map_err(|e| {
+                let chain = format_core_chain(&e);
+                ProviderError::Backend(format!("links for {}: {chain}", var.name()))
+            })?;
             summaries.push(VarSummary {
                 id: var.id(),
                 name: var.name().to_owned(),
@@ -105,10 +106,120 @@ impl VarMutator for InMemoryBackend {
 
 /// Map a [`CoreError`] into a [`ProviderError`] for the TUI.
 ///
-/// The TUI only renders the message string, so we keep the mapping
-/// trivial: every backend failure becomes [`ProviderError::Backend`]
-/// with the verbatim error. Phase 2 can split availability vs.
-/// integrity if surfacing different colors / actions becomes useful.
+/// Walks the `source()` chain and joins each layer's `Display` with
+/// `: ` so the inner cause (storage error, FS error kind, …) reaches
+/// the toast. Without the chain walk the TUI would only see the
+/// outer variant name and the user could not act on it.
+///
+/// Phase 2 can split availability vs. integrity if surfacing
+/// different colors / actions becomes useful.
 fn core_to_provider(err: &CoreError) -> ProviderError {
-    ProviderError::Backend(err.to_string())
+    ProviderError::Backend(format_core_chain(err))
+}
+
+/// Render an error and its full `source()` chain into
+/// `outer: middle: leaf` form. Lives here rather than in `error.rs`
+/// so the backend adapter does not need to depend on that module.
+fn format_core_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut msg = err.to_string();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        msg.push_str(": ");
+        msg.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use evault_core::model::{Group, VarKind};
+    use secrecy::SecretString;
+
+    #[test]
+    fn empty_backend_lists_no_vars() {
+        let backend = InMemoryBackend::new();
+        let rows = backend.list().expect("list must not fail on empty");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn list_returns_summary_for_created_var_sorted_by_name() {
+        let backend = InMemoryBackend::new();
+        // Create directly via the underlying registry (subcommands are
+        // phase 2; this test exercises the adapter, not the CLI surface).
+        backend
+            .registry()
+            .create_var(
+                "BETA",
+                Group::User,
+                VarKind::Plain,
+                SecretString::new("v2".to_owned().into()),
+            )
+            .expect("create BETA");
+        backend
+            .registry()
+            .create_var(
+                "ALPHA",
+                Group::User,
+                VarKind::Plain,
+                SecretString::new("v1".to_owned().into()),
+            )
+            .expect("create ALPHA");
+
+        let rows = backend.list().expect("list must succeed");
+        assert_eq!(rows.len(), 2);
+        // Sort policy: alphabetical by name (asserted explicitly so a
+        // future refactor that drops the sort fails loudly).
+        assert_eq!(rows[0].name, "ALPHA");
+        assert_eq!(rows[1].name, "BETA");
+        // Length is the size of the stored value, not the metadata.
+        assert_eq!(rows[0].value_len, 2);
+    }
+
+    #[test]
+    fn delete_removes_the_var_from_subsequent_listings() {
+        let backend = InMemoryBackend::new();
+        let id = backend
+            .registry()
+            .create_var(
+                "DOOMED",
+                Group::User,
+                VarKind::Plain,
+                SecretString::new("x".to_owned().into()),
+            )
+            .expect("create");
+        VarMutator::delete(&backend, id).expect("delete");
+        assert!(backend.list().expect("list").is_empty());
+    }
+
+    /// Synthetic error with a chain — used to exercise the chain
+    /// walker without depending on whichever `CoreError` variants
+    /// happen to be chained today.
+    #[derive(Debug)]
+    struct Outer(Inner);
+    #[derive(Debug)]
+    struct Inner;
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("outer")
+        }
+    }
+    impl std::fmt::Display for Inner {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("inner")
+        }
+    }
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+    impl std::error::Error for Inner {}
+
+    #[test]
+    fn format_core_chain_walks_all_levels() {
+        assert_eq!(format_core_chain(&Outer(Inner)), "outer: inner");
+    }
 }

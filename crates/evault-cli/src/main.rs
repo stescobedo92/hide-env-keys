@@ -11,10 +11,19 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod backend;
+mod error;
+
+use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
 use crate::backend::InMemoryBackend;
+use crate::error::{format_chain, CliError};
+
+/// POSIX-conventional exit code for "command-line misuse / feature
+/// unavailable". Distinct from `1` (runtime failure) so wrapper
+/// scripts can branch on it.
+const EXIT_UNIMPLEMENTED: u8 = 2;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -23,7 +32,10 @@ use crate::backend::InMemoryBackend;
     about = "Secure cross-platform manager for environment variables.",
     long_about = "Run without a subcommand to launch the interactive TUI. \
                   Subcommands (ls, add, rm, link, run, gen, scan) operate \
-                  non-interactively for scripting and CI."
+                  non-interactively for scripting and CI.\n\
+                  \n\
+                  Phase 1 ships the TUI only; subcommands marked '(stub)' \
+                  in --help return exit code 2 and will be wired in phase 2."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -34,9 +46,9 @@ struct Cli {
 enum Command {
     /// Launch the interactive TUI (default action).
     Tui,
-    /// List managed variables (not yet implemented in phase 1).
+    /// (stub) List managed variables.
     Ls,
-    /// Create a new variable (not yet implemented).
+    /// (stub) Create a new variable.
     Add {
         /// Variable name (must match `[A-Z_][A-Z0-9_]*`).
         name: String,
@@ -44,38 +56,59 @@ enum Command {
         #[arg(long)]
         secret: bool,
     },
-    /// Delete a variable (not yet implemented).
+    /// (stub) Delete a variable.
     Rm {
         /// Variable name.
         name: String,
     },
 }
 
-fn main() -> std::process::ExitCode {
-    let cli = Cli::parse();
-    match run(cli) {
-        Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("evault: {e}");
-            std::process::ExitCode::FAILURE
+impl Command {
+    /// Verbatim subcommand name as the user typed it. Used in error
+    /// messages so the user knows which subcommand was unavailable.
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Tui => "tui",
+            Self::Ls => "ls",
+            Self::Add { .. } => "add",
+            Self::Rm { .. } => "rm",
         }
     }
 }
 
-fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(CliError::SubcommandUnimplemented { name }) => {
+            eprintln!(
+                "evault: '{name}' is not yet implemented. \
+                 Launch the TUI with `evault` (no arguments) to drive \
+                 the registry interactively."
+            );
+            ExitCode::from(EXIT_UNIMPLEMENTED)
+        }
+        Err(CliError::Tui(e)) => {
+            // Walk the source chain so the user sees the underlying
+            // cause (terminal I/O kind, provider message) rather than
+            // a bare "TUI error".
+            eprintln!("evault: {}", format_chain(&e));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<(), CliError> {
     match cli.command.unwrap_or(Command::Tui) {
         Command::Tui => {
             let backend = InMemoryBackend::new();
             evault_tui::run_tui(backend)?;
             Ok(())
         }
-        Command::Ls | Command::Add { .. } | Command::Rm { .. } => {
-            eprintln!(
-                "evault: this subcommand is not yet implemented in phase 1. \
-                 Launch the TUI with `evault` (no arguments) to drive the \
-                 registry interactively."
-            );
-            Err("subcommand not implemented".into())
+        cmd @ (Command::Ls | Command::Add { .. } | Command::Rm { .. }) => {
+            Err(CliError::SubcommandUnimplemented {
+                name: cmd.name().to_owned(),
+            })
         }
     }
 }

@@ -1205,6 +1205,7 @@ dependencies = [
  "evault-core",
  "evault-store-memory",
  "evault-tui",
+ "secrecy",
  "thiserror 2.0.18",
 ]
 
