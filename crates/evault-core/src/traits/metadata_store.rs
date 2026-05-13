@@ -65,8 +65,16 @@ pub trait MetadataStore: Send + Sync {
     /// variables. Secret values must go to a
     /// [`SecretStore`](crate::traits::SecretStore).
     ///
+    /// **Implementations MUST enforce this rule**: a call with a
+    /// [`VarKind::Secret`](crate::model::VarKind::Secret) variable is a
+    /// silent-failure surface (the value would be stored in the wrong tier),
+    /// so backends must reject it with
+    /// [`MetadataError::KindMismatch`] instead of silently writing.
+    ///
     /// # Errors
     /// Returns [`MetadataError::VarNotFound`] if the variable does not exist;
+    /// [`MetadataError::KindMismatch`] if the variable is not
+    /// [`VarKind::Plain`](crate::model::VarKind::Plain);
     /// [`MetadataError::Backend`] on storage failures.
     fn set_plain_value(&self, id: VarId, value: &str) -> Result<(), MetadataError>;
 

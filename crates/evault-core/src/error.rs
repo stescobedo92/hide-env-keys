@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::model::{ProjectId, VarId};
+use crate::model::{ProjectId, VarId, VarKind};
 
 /// Errors that can occur while interacting with a
 /// [`MetadataStore`](crate::traits::MetadataStore).
@@ -34,6 +34,22 @@ pub enum MetadataError {
     /// A value supplied to the metadata layer failed a domain invariant.
     #[error("invalid input: {0}")]
     Invalid(String),
+
+    /// An operation that requires a specific [`VarKind`] (e.g. storing a
+    /// plain value) was invoked on a variable of the wrong kind.
+    ///
+    /// This guards against secrets accidentally flowing into the plain-value
+    /// side table — every backend must enforce this rule, never silently
+    /// accept a kind mismatch.
+    #[error("variable {id} has kind {actual:?} but {expected:?} was required")]
+    KindMismatch {
+        /// Identifier of the offending variable.
+        id: VarId,
+        /// The kind the operation expected.
+        expected: VarKind,
+        /// The kind the variable actually has.
+        actual: VarKind,
+    },
 
     /// The underlying storage backend reported an unexpected failure.
     ///
