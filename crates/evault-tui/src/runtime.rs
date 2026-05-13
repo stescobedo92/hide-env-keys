@@ -8,7 +8,7 @@ use ratatui::DefaultTerminal;
 
 use crate::app::{AppState, DispatchOutcome};
 use crate::error::TuiError;
-use crate::provider::VarProvider;
+use crate::provider::{VarMutator, VarProvider};
 use crate::theme::Theme;
 use crate::views;
 
@@ -19,17 +19,22 @@ use crate::views;
 /// asleep, not redrawing the same frame.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Run the TUI against `provider`.
+/// Run the TUI against `backend`.
+///
+/// The single `backend` argument implements both [`VarProvider`]
+/// (read side: the dashboard refreshes from it) and [`VarMutator`]
+/// (write side: the confirm-modal delete flow calls into it). Phase
+/// 2c will extend [`VarMutator`] with create / update / link
+/// without breaking this signature.
 ///
 /// Owns the terminal lifecycle: enters raw mode + the alternate
 /// screen, installs a panic hook that restores them on unwind, and
 /// guarantees the restore happens whether the loop returns `Ok`,
 /// returns `Err`, or panics.
 ///
-/// `provider` is **consumed** for the duration of the session: the
+/// `backend` is **consumed** for the duration of the session: the
 /// TUI takes ownership and drops it on return, so callers cannot
-/// reuse the same instance for a second session. Change the signature
-/// to `&P` if you need a longer-lived provider.
+/// reuse the same instance for a second session.
 ///
 /// # Errors
 /// Returns [`TuiError::Terminal`] if terminal I/O fails (raw-mode
@@ -37,24 +42,32 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// errors (e.g. signal-interrupted `poll`) are retried internally and
 /// do not surface. Returns [`TuiError::Provider`] only if the *initial*
 /// refresh fails; subsequent refresh errors are surfaced as a sticky
-/// error toast and the loop continues.
+/// error toast and the loop continues. Delete failures are surfaced
+/// as a sticky error toast — they never propagate.
 ///
 /// # Examples
 ///
 /// ```no_run
-/// use evault_tui::{run_tui, ProviderError, VarProvider, VarSummary};
+/// use evault_core::model::VarId;
+/// use evault_tui::{run_tui, ProviderError, VarMutator, VarProvider, VarSummary};
 ///
 /// struct Empty;
 /// impl VarProvider for Empty {
 ///     fn list(&self) -> Result<Vec<VarSummary>, ProviderError> { Ok(Vec::new()) }
 /// }
+/// impl VarMutator for Empty {
+///     fn delete(&self, _id: VarId) -> Result<(), ProviderError> { Ok(()) }
+/// }
 ///
 /// run_tui(Empty).unwrap();
 /// ```
 #[allow(clippy::needless_pass_by_value)]
-pub fn run_tui<P: VarProvider>(provider: P) -> Result<(), TuiError> {
+pub fn run_tui<B>(backend: B) -> Result<(), TuiError>
+where
+    B: VarProvider + VarMutator,
+{
     let mut terminal = ratatui::try_init()?;
-    let loop_result = event_loop(&mut terminal, &provider);
+    let loop_result = event_loop(&mut terminal, &backend);
 
     // ALWAYS attempt to restore. The restore-error precedence policy
     // is: if the loop succeeded, surface a restore failure; if the
@@ -79,16 +92,16 @@ pub fn run_tui<P: VarProvider>(provider: P) -> Result<(), TuiError> {
     }
 }
 
-fn event_loop<P: VarProvider + ?Sized>(
-    terminal: &mut DefaultTerminal,
-    provider: &P,
-) -> Result<(), TuiError> {
+fn event_loop<B>(terminal: &mut DefaultTerminal, backend: &B) -> Result<(), TuiError>
+where
+    B: VarProvider + VarMutator + ?Sized,
+{
     let mut app = AppState::new();
     let theme = Theme::dark();
 
     // Initial load. A first-load failure is a hard error: the user
     // sees an empty TUI and has no way to recover.
-    app.refresh(provider)?;
+    app.refresh(backend)?;
 
     while !app.quit_requested() {
         terminal.draw(|frame| views::render(frame, &mut app, &theme))?;
@@ -116,14 +129,15 @@ fn event_loop<P: VarProvider + ?Sized>(
         // implicit drop via `if let Event::Key(_) = ...`.
         #[allow(clippy::match_same_arms)]
         match ev {
-            Event::Key(key) => {
-                if matches!(app.dispatch_key(key), DispatchOutcome::RefreshRequested) {
+            Event::Key(key) => match app.dispatch_key(key) {
+                DispatchOutcome::Continue => {}
+                DispatchOutcome::RefreshRequested => {
                     // `dispatch_key` already cleared any toast. We
                     // re-fetch here so the side-effect lives at the
                     // boundary that owns the provider. On success
                     // surface a positive confirmation; on failure the
                     // error toast is sticky and survives further input.
-                    match app.refresh(provider) {
+                    match app.refresh(backend) {
                         Ok(()) => {
                             // When a filter is applied the dashboard
                             // title reads `vars (matched/total)`. The
@@ -142,7 +156,29 @@ fn event_loop<P: VarProvider + ?Sized>(
                         Err(e) => app.set_error_toast(e.to_string()),
                     }
                 }
-            }
+                DispatchOutcome::DeleteRequested { id, name } => {
+                    // Side-effect at the runtime boundary that owns
+                    // the backend. On success we *first* return to
+                    // dashboard if the user was inspecting this very
+                    // row (otherwise refresh's stale-target guard
+                    // would surface a misleading "removed elsewhere"
+                    // toast), then refresh, then toast the success
+                    // message — toast comes last so the user sees the
+                    // explicit confirmation rather than the generic
+                    // refresh banner.
+                    match backend.delete(id) {
+                        Ok(()) => {
+                            app.return_to_dashboard();
+                            if let Err(e) = app.refresh(backend) {
+                                app.set_error_toast(format!("delete ok, but refresh failed: {e}"));
+                            } else {
+                                app.set_info_toast(format!("deleted `{name}`"));
+                            }
+                        }
+                        Err(e) => app.set_error_toast(format!("delete failed: {e}")),
+                    }
+                }
+            },
             // Resize: the loop redraws on every iteration anyway, so
             // the new dimensions are picked up on the next `draw()`.
             Event::Resize(_, _) => {}

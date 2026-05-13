@@ -26,7 +26,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         ("Enter", "open detail view (Esc returns)"),
         ("n", "new variable"),
         ("e", "edit variable"),
-        ("d", "delete (with confirm)"),
+        ("d", "delete (with [y/n] confirm)"),
         ("l", "link to project"),
         ("y", "copy value"),
         ("s", "toggle secret visibility"),

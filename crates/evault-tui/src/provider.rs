@@ -69,3 +69,28 @@ pub trait VarProvider: Send + Sync {
     /// returns an error. The TUI surfaces the message as a toast.
     fn list(&self) -> Result<Vec<VarSummary>, ProviderError>;
 }
+
+/// Write-side counterpart to [`VarProvider`].
+///
+/// The TUI invokes [`VarMutator`] methods on user-confirmed actions
+/// (delete in phase 2b2; create / update / link in phase 2c). The
+/// trait is split from `VarProvider` so adapters that only support
+/// reading (e.g. a remote read-only view) need not implement writes,
+/// though [`crate::run_tui`] requires both for now.
+///
+/// Implementations must be safe to share across threads.
+pub trait VarMutator: Send + Sync {
+    /// Delete the variable with the given id.
+    ///
+    /// Implementations should make the call idempotent if at all
+    /// possible: re-deleting an already-absent variable should not
+    /// fail. The TUI refreshes its row buffer after every successful
+    /// delete, so a non-idempotent backend will surface spurious
+    /// errors when the user clicks delete twice on a stale view.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] if the backend refused or could not
+    /// perform the delete. The TUI surfaces the message as a sticky
+    /// error toast and the user can retry from the dashboard.
+    fn delete(&self, id: VarId) -> Result<(), ProviderError>;
+}

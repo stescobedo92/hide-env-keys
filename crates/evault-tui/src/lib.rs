@@ -39,6 +39,23 @@
 //! app.apply(Action::Dismiss);
 //! assert!(!app.help_visible());
 //! ```
+//!
+//! [`run_tui`] additionally requires its backend to implement
+//! [`VarMutator`] for the delete flow:
+//!
+//! ```no_run
+//! use evault_core::model::VarId;
+//! use evault_tui::{run_tui, ProviderError, VarMutator, VarProvider, VarSummary};
+//!
+//! struct EmptyBackend;
+//! impl VarProvider for EmptyBackend {
+//!     fn list(&self) -> Result<Vec<VarSummary>, ProviderError> { Ok(Vec::new()) }
+//! }
+//! impl VarMutator for EmptyBackend {
+//!     fn delete(&self, _id: VarId) -> Result<(), ProviderError> { Ok(()) }
+//! }
+//! run_tui(EmptyBackend).unwrap();
+//! ```
 #![forbid(unsafe_code)]
 
 mod app;
@@ -54,6 +71,6 @@ mod views;
 pub use app::{AppState, DispatchOutcome, View};
 pub use error::TuiError;
 pub use event::Action;
-pub use provider::{ProviderError, VarProvider, VarSummary};
+pub use provider::{ProviderError, VarMutator, VarProvider, VarSummary};
 pub use runtime::run_tui;
 pub use theme::Theme;

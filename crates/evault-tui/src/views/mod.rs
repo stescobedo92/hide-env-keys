@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::{AppState, View};
-use crate::components::{fuzzy_input, statusbar, toast};
+use crate::components::{fuzzy_input, modal, statusbar, toast};
 use crate::theme::Theme;
 
 /// Render the full UI for the current `app` state.
@@ -70,6 +70,12 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
 
     if app.help_visible() {
         help::render(frame, centered(area, 60, 70), theme);
+    }
+
+    // Confirm modal: drawn last so it sits on top of every other
+    // layer (dashboard / detail / filter input / toast / help).
+    if let Some(req) = app.current_confirm() {
+        modal::render(frame, centered(area, 50, 25), req, theme);
     }
 }
 

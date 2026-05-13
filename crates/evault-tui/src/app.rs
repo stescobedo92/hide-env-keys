@@ -84,12 +84,16 @@ pub struct AppState {
     /// when an external mutation reshuffles the row buffer. Cleared
     /// on every return to the dashboard.
     detail_target: Option<VarId>,
+    /// Modal confirmation request currently focused. When `Some`,
+    /// [`Self::dispatch_key`] routes all keys to the confirm-modal
+    /// handler instead of the normal Action / filter paths.
+    confirm: Option<ConfirmRequest>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
 /// (the runtime) should perform an I/O side effect after the state
 /// has been updated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
     /// Continue the event loop without further side effects.
     Continue,
@@ -97,6 +101,40 @@ pub enum DispatchOutcome {
     /// `Refresh` intent. The runtime owns the provider and is
     /// responsible for the actual call.
     RefreshRequested,
+    /// The user confirmed deletion of the variable identified by
+    /// `id`; the runtime should call
+    /// [`VarMutator::delete`](crate::VarMutator::delete) and then
+    /// refresh. `name` is carried along for the post-delete success
+    /// toast so the runtime does not have to look it up after the row
+    /// is gone.
+    DeleteRequested {
+        /// Variable identifier the user confirmed deleting.
+        id: VarId,
+        /// Human-readable name, for use in the post-delete toast.
+        name: String,
+    },
+}
+
+/// Modal confirmation request — internal state for the y/n overlay.
+///
+/// Crate-private: external callers don't construct these; they are
+/// raised by [`AppState`] in response to user input and rendered by
+/// the views layer.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfirmRequest {
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) action: PendingAction,
+}
+
+/// Action to perform when a [`ConfirmRequest`] is accepted.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PendingAction {
+    /// Delete the named variable; the runtime resolves via
+    /// [`VarMutator::delete`](crate::VarMutator::delete).
+    DeleteVar { id: VarId, name: String },
 }
 
 impl Default for AppState {
@@ -127,6 +165,7 @@ impl AppState {
             filter: None,
             view: View::Dashboard,
             detail_target: None,
+            confirm: None,
         }
     }
 
@@ -196,6 +235,12 @@ impl AppState {
         if key.kind != KeyEventKind::Press {
             return DispatchOutcome::Continue;
         }
+        // Modal confirm steals focus from everything else: when the
+        // user is being asked "are you sure?", any other action would
+        // be ambiguous.
+        if self.confirm.is_some() {
+            return self.dispatch_confirm_key(key);
+        }
         if self.is_filter_input_active() {
             return self.dispatch_filter_input_key(key);
         }
@@ -205,6 +250,37 @@ impl AppState {
             DispatchOutcome::RefreshRequested
         } else {
             DispatchOutcome::Continue
+        }
+    }
+
+    /// Handle a key while a confirmation modal is focused.
+    ///
+    /// Recognised keys:
+    /// - `y` / `Y` / `Enter` — accept; consume the pending action
+    ///   and surface it as a [`DispatchOutcome`] for the runtime.
+    /// - `n` / `N` / `Esc` — cancel; clear the modal.
+    /// - `Ctrl+C` — quit (overrides the modal so the user can always
+    ///   escape).
+    /// - Any other key is ignored and the modal stays focused.
+    fn dispatch_confirm_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        let accept = matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter);
+        let reject = matches!(key.code, KeyCode::Char('n' | 'N') | KeyCode::Esc);
+        if !accept && !reject {
+            return DispatchOutcome::Continue;
+        }
+        let Some(req) = self.confirm.take() else {
+            return DispatchOutcome::Continue;
+        };
+        if reject {
+            return DispatchOutcome::Continue;
+        }
+        match req.action {
+            PendingAction::DeleteVar { id, name } => DispatchOutcome::DeleteRequested { id, name },
         }
     }
 
@@ -286,13 +362,13 @@ impl AppState {
             }
             Action::StartFuzzy => self.open_filter(),
             Action::OpenDetail => self.open_detail(),
+            Action::DeleteVar => self.request_delete_confirmation(),
             Action::Noop => {}
             // Phase-2c surfaces: not yet wired to a registry. We surface
             // a toast so the user knows the key was *received* but the
             // operation is not yet implemented.
             Action::NewVar
             | Action::EditVar
-            | Action::DeleteVar
             | Action::LinkVar
             | Action::CopyValue
             | Action::SwitchProfile
@@ -363,6 +439,58 @@ impl AppState {
     pub const fn return_to_dashboard(&mut self) {
         self.view = View::Dashboard;
         self.detail_target = None;
+    }
+
+    /// Raise a confirmation modal for deleting the currently-targeted
+    /// variable (the selected row on the Dashboard, or
+    /// [`Self::detail_row`] when on Detail). Surfaces an info toast
+    /// instead if there is no target — without clobbering a sticky
+    /// error toast.
+    fn request_delete_confirmation(&mut self) {
+        let target = match self.view {
+            View::Dashboard => self.selected_row(),
+            View::Detail => self.detail_row(),
+        };
+        let Some(var) = target else {
+            if !self.toast_is_error() {
+                self.set_info_toast("no row selected");
+            }
+            return;
+        };
+        let kind = match var.kind {
+            evault_core::model::VarKind::Secret => "secret",
+            evault_core::model::VarKind::Plain => "plain",
+        };
+        self.confirm = Some(ConfirmRequest {
+            title: "delete variable".to_owned(),
+            body: format!("Delete `{}` ({kind})?\nThis cannot be undone.", var.name),
+            action: PendingAction::DeleteVar {
+                id: var.id,
+                name: var.name.clone(),
+            },
+        });
+    }
+
+    /// Whether a confirmation modal is currently focused.
+    #[must_use]
+    pub const fn is_confirm_visible(&self) -> bool {
+        self.confirm.is_some()
+    }
+
+    /// Read-only access to the focused confirm request (for the
+    /// views layer). Crate-private so external callers stay on the
+    /// observation-only API ([`Self::is_confirm_visible`] et al.).
+    pub(crate) const fn current_confirm(&self) -> Option<&ConfirmRequest> {
+        self.confirm.as_ref()
+    }
+
+    /// Programmatic dismissal of a focused modal. Returns `true` if a
+    /// modal was actually cleared. Used by the runtime to flush state
+    /// after the user-initiated delete it triggered has completed.
+    pub fn dismiss_confirm(&mut self) -> bool {
+        let was_set = self.confirm.is_some();
+        self.confirm = None;
+        was_set
     }
 
     /// The variable currently displayed by the Detail view, looked
@@ -1215,6 +1343,136 @@ mod tests {
         // 5) finally quit
         app.apply(Action::Dismiss);
         assert!(app.quit_requested());
+    }
+
+    // ─── Phase 2b2: confirm modal + delete flow ───────────────────
+
+    #[test]
+    fn delete_action_opens_confirm_modal_for_selected_row() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        assert!(!app.is_confirm_visible());
+        app.apply(Action::MoveDown); // select index 1 (API_KEY)
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::DeleteVar);
+        assert!(app.is_confirm_visible());
+        let req = app.current_confirm().expect("confirm set");
+        assert!(req.body.contains("API_KEY"));
+        match &req.action {
+            PendingAction::DeleteVar { id, name } => {
+                assert_eq!(*id, target_id);
+                assert_eq!(name, "API_KEY");
+            }
+        }
+    }
+
+    #[test]
+    fn delete_action_on_empty_dashboard_does_not_open_modal() {
+        let mut app = AppState::new();
+        app.refresh(&StaticProvider(Vec::new())).unwrap();
+        app.apply(Action::DeleteVar);
+        assert!(!app.is_confirm_visible());
+        assert_eq!(app.toast_text(), Some("no row selected"));
+    }
+
+    #[test]
+    fn delete_action_on_detail_view_targets_inspected_var() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::MoveDown);
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::OpenDetail);
+        app.apply(Action::DeleteVar);
+        assert!(app.is_confirm_visible());
+        let req = app.current_confirm().expect("confirm set");
+        match &req.action {
+            PendingAction::DeleteVar { id, .. } => assert_eq!(*id, target_id),
+        }
+    }
+
+    #[test]
+    fn confirm_modal_steals_focus_from_filter_and_actions() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        assert!(app.is_confirm_visible());
+
+        // Char keys like 's' that normally fire ToggleSecretVisibility
+        // must NOT take effect while a confirm is focused.
+        let s = press(KeyCode::Char('s'));
+        let outcome = app.dispatch_key(s);
+        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(!app.secrets_visible(), "modal must steal focus from `s`");
+        assert!(app.is_confirm_visible());
+
+        // Arrow keys must not navigate either.
+        let down = press(KeyCode::Down);
+        app.dispatch_key(down);
+        assert!(app.is_confirm_visible());
+    }
+
+    #[test]
+    fn modal_n_or_esc_cancels_without_side_effects() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        let outcome = app.dispatch_key(press(KeyCode::Char('n')));
+        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(!app.is_confirm_visible());
+
+        app.apply(Action::DeleteVar);
+        let outcome = app.dispatch_key(press(KeyCode::Esc));
+        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(!app.is_confirm_visible());
+    }
+
+    #[test]
+    fn modal_y_emits_delete_requested_with_id_and_name() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::MoveDown); // API_KEY
+        let target_id = app.selected_row().expect("selection").id;
+        app.apply(Action::DeleteVar);
+        let outcome = app.dispatch_key(press(KeyCode::Char('y')));
+        assert!(!app.is_confirm_visible(), "modal must clear after accept");
+        assert_eq!(
+            outcome,
+            DispatchOutcome::DeleteRequested {
+                id: target_id,
+                name: "API_KEY".into()
+            }
+        );
+    }
+
+    #[test]
+    fn modal_enter_also_accepts() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        let outcome = app.dispatch_key(press(KeyCode::Enter));
+        assert!(!app.is_confirm_visible());
+        assert!(matches!(outcome, DispatchOutcome::DeleteRequested { .. }));
+    }
+
+    #[test]
+    fn ctrl_c_quits_even_with_modal_focused() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        app.dispatch_key(ctrl_c);
+        assert!(app.quit_requested());
+    }
+
+    #[test]
+    fn unknown_keys_keep_modal_focused() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::DeleteVar);
+        // Letter neither y/Y/n/N nor Enter/Esc — must not dismiss.
+        app.dispatch_key(press(KeyCode::Char('q')));
+        assert!(app.is_confirm_visible());
+        assert!(!app.quit_requested());
     }
 
     #[test]
