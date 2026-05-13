@@ -47,11 +47,13 @@ impl ProcessRunner for StdProcessRunner {
         // We do NOT call `env_clear()` — the user wants PATH and similar
         // to propagate. Iterating `std::env::vars_os` gives the parent's
         // view of the environment as it was when this Rust process started.
+        //
+        // Windows env var names are case-insensitive: `evault_master` and
+        // `EVAULT_MASTER` refer to the same variable. On Unix they are
+        // case-sensitive. The prefix match below is platform-aware so the
+        // strip honours the trait contract on every host.
         for (key, _) in std::env::vars_os() {
-            if key
-                .to_str()
-                .is_some_and(|s| s.starts_with(EVAULT_ENV_PREFIX))
-            {
+            if matches_evault_prefix(&key) {
                 cmd.env_remove(&key);
             }
         }
@@ -65,15 +67,49 @@ impl ProcessRunner for StdProcessRunner {
         // Stdin/stdout/stderr are inherited by default; we deliberately do
         // not override them.
 
-        let status = cmd.status().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
+        let status = cmd.status().map_err(|e| {
+            let kind = e.kind();
+            if kind == std::io::ErrorKind::NotFound {
                 RunnerError::Spawn(format!("program not found: {program:?}"))
+            } else {
+                // Include the io::Error Display so OS-level diagnostic
+                // context survives (e.g. "permission denied (os error 5)"
+                // on Windows). No secret material is in scope here:
+                // io::Error Display for OS errors is bounded to the
+                // syscall name and the errno description.
+                RunnerError::Spawn(format!("spawn: {kind:?}: {e}"))
             }
-            other => RunnerError::Spawn(format!("spawn: {other:?}")),
         })?;
         Ok(ProcessOutcome {
             exit_code: status.code(),
         })
+    }
+}
+
+/// Returns `true` if `key` starts with the `EVAULT_` prefix under the
+/// host platform's env-var name semantics.
+///
+/// - Unix: case-sensitive prefix match.
+/// - Windows: case-insensitive prefix match. The OS treats env var names
+///   as case-insensitive, so a parent var named `evault_master` is the
+///   same variable as `EVAULT_MASTER` and must be stripped too.
+///
+/// Non-UTF-8 OS strings (rare on every supported platform) are skipped
+/// — they cannot collide with the ASCII `EVAULT_` prefix.
+fn matches_evault_prefix(key: &std::ffi::OsStr) -> bool {
+    let Some(s) = key.to_str() else {
+        return false;
+    };
+    if s.len() < EVAULT_ENV_PREFIX.len() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        s[..EVAULT_ENV_PREFIX.len()].eq_ignore_ascii_case(EVAULT_ENV_PREFIX)
+    }
+    #[cfg(not(windows))]
+    {
+        s.starts_with(EVAULT_ENV_PREFIX)
     }
 }
 
@@ -138,5 +174,43 @@ mod tests {
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn matches_evault_prefix_uppercase() {
+        assert!(matches_evault_prefix(std::ffi::OsStr::new("EVAULT_MASTER")));
+        assert!(matches_evault_prefix(std::ffi::OsStr::new("EVAULT_")));
+    }
+
+    #[test]
+    fn matches_evault_prefix_rejects_non_prefix() {
+        assert!(!matches_evault_prefix(std::ffi::OsStr::new("PATH")));
+        assert!(!matches_evault_prefix(std::ffi::OsStr::new("VAULT_FOO")));
+        // Shorter than the prefix.
+        assert!(!matches_evault_prefix(std::ffi::OsStr::new("EVAULT")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn matches_evault_prefix_is_case_insensitive_on_windows() {
+        // Windows env var names are case-insensitive: any casing of the
+        // prefix must be detected and stripped.
+        assert!(matches_evault_prefix(std::ffi::OsStr::new("evault_master")));
+        assert!(matches_evault_prefix(std::ffi::OsStr::new("Evault_Master")));
+        assert!(matches_evault_prefix(std::ffi::OsStr::new("eVaUlT_X")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn matches_evault_prefix_is_case_sensitive_on_unix() {
+        // POSIX env var names are case-sensitive. Lower-case must NOT
+        // match — a parent that intentionally has `evault_master`
+        // (distinct from `EVAULT_MASTER`) is left alone.
+        assert!(!matches_evault_prefix(std::ffi::OsStr::new(
+            "evault_master"
+        )));
+        assert!(!matches_evault_prefix(std::ffi::OsStr::new(
+            "Evault_Master"
+        )));
     }
 }

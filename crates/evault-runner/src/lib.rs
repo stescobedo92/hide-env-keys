@@ -25,6 +25,17 @@
 //!   `env_clear()` + a manual rebuild, so `PATH` and other inherited
 //!   variables remain available to the child.
 //!
+//! # Error-variant note
+//!
+//! [`StdProcessRunner`] collapses every post-validation `std::io::Error`
+//! from [`Command::status`](std::process::Command::status) into
+//! [`RunnerError::Spawn`](evault_core::error::RunnerError::Spawn) and
+//! therefore **never** produces
+//! [`RunnerError::Io`](evault_core::error::RunnerError::Io). The trait
+//! lists `Io` for implementations that distinguish spawn-time from
+//! post-spawn IO failure; this implementation does not. Callers matching
+//! on `Io` will simply not see it from this backend.
+//!
 //! # Examples
 //!
 //! ```ignore
