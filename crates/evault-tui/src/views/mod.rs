@@ -7,34 +7,38 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::AppState;
-use crate::components::{statusbar, toast};
+use crate::components::{fuzzy_input, statusbar, toast};
 use crate::theme::Theme;
 
 /// Render the full UI for the current `app` state.
 ///
-/// Composes the dashboard, status bar, and (when active) the help
-/// overlay. The runtime calls this from inside `terminal.draw(...)`.
+/// Composes the dashboard, optional fuzzy-input strip, optional
+/// toast strip, status bar, and (when active) the help overlay.
+/// The runtime calls this from inside `terminal.draw(...)`.
 pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let area = frame.area();
 
-    // Layout: dashboard body | toast row (only when needed) | status.
-    // The toast row is fixed-height 1 and pinned directly above the
-    // status bar so it never clobbers the dashboard's bottom border
-    // or the status hints below it.
+    // Layout, top-down:
+    //   - body (dashboard) — flexible
+    //   - fuzzy input (1 row, only when a filter is active)
+    //   - toast (1 row, only when a toast is showing)
+    //   - status bar (1 row, always)
+    //
+    // We compose the constraint slice dynamically so optional rows
+    // do not steal vertical space when they are not on-screen.
+    let show_filter = app.is_filter_active();
     let show_toast = app.toast_text().is_some();
-    let constraints: &[Constraint] = if show_toast {
-        &[
-            Constraint::Min(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ]
-    } else {
-        &[Constraint::Min(1), Constraint::Length(1)]
-    };
+
+    let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
+    if show_filter {
+        constraints.push(Constraint::Length(1));
+    }
+    if show_toast {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(1)); // status bar
+
     let regions = Layout::vertical(constraints).split(area);
-    // `split` always returns `constraints.len()` rects so the indexing
-    // below is guaranteed in-bounds — but we still use `get` and a
-    // graceful early-return to satisfy `clippy::indexing_slicing`.
     let Some(&body) = regions.first() else { return };
     let Some(&status) = regions.last() else {
         return;
@@ -43,9 +47,20 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     dashboard::render(frame, body, app, theme);
     statusbar::render(frame, status, app, theme);
 
+    // Optional rows are indexed positionally based on which flags
+    // were on. The `split` always returns exactly `constraints.len()`
+    // entries; we use `get` with a graceful no-op to keep
+    // `clippy::indexing_slicing` happy.
+    let mut next = 1_usize;
+    if show_filter {
+        if let Some(&r) = regions.get(next) {
+            fuzzy_input::render(frame, r, app, theme);
+        }
+        next += 1;
+    }
     if show_toast {
-        if let Some(&toast_area) = regions.get(1) {
-            toast::render(frame, toast_area, app, theme);
+        if let Some(&r) = regions.get(next) {
+            toast::render(frame, r, app, theme);
         }
     }
 

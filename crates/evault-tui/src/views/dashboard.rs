@@ -28,12 +28,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, theme: &The
     .bottom_margin(1);
 
     let secrets_visible = app.secrets_visible();
-    let row_count = app.rows().len();
+    let total_rows = app.rows().len();
+    // Renders the rows currently *visible* (i.e. passing the active
+    // fuzzy filter, or all rows when no filter is applied). The
+    // dashboard never sees raw row indices — they would diverge from
+    // `TableState::selected()` when a filter is on.
     let rows: Vec<Row<'static>> = app
-        .rows()
-        .iter()
+        .visible_rows()
         .map(|v| build_row(v, secrets_visible, theme))
         .collect();
+    let visible_count = rows.len();
 
     let widths = [
         Constraint::Min(20),    // NAME
@@ -44,7 +48,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, theme: &The
         Constraint::Length(17), // UPDATED (YYYY-MM-DD HH:MM)
     ];
 
-    let title = format!(" vars ({row_count}) ");
+    let title = if visible_count == total_rows {
+        format!(" vars ({total_rows}) ")
+    } else {
+        format!(" vars ({visible_count}/{total_rows}) ")
+    };
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::bordered().title(title))

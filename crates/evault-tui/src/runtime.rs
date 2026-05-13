@@ -6,9 +6,8 @@ use std::time::Duration;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
 
-use crate::app::AppState;
+use crate::app::{AppState, DispatchOutcome};
 use crate::error::TuiError;
-use crate::event::Action;
 use crate::provider::VarProvider;
 use crate::theme::Theme;
 use crate::views;
@@ -118,14 +117,12 @@ fn event_loop<P: VarProvider + ?Sized>(
         #[allow(clippy::match_same_arms)]
         match ev {
             Event::Key(key) => {
-                let action = Action::from_key(key);
-                app.apply(action);
-                if matches!(action, Action::Refresh) {
-                    // `apply` already cleared any toast. We re-fetch
-                    // here so the side-effect lives at the boundary
-                    // that owns the provider. On success surface a
-                    // positive confirmation; on failure the error
-                    // toast is sticky and survives further input.
+                if matches!(app.dispatch_key(key), DispatchOutcome::RefreshRequested) {
+                    // `dispatch_key` already cleared any toast. We
+                    // re-fetch here so the side-effect lives at the
+                    // boundary that owns the provider. On success
+                    // surface a positive confirmation; on failure the
+                    // error toast is sticky and survives further input.
                     match app.refresh(provider) {
                         Ok(()) => {
                             app.set_info_toast(format!("refreshed ({} vars)", app.rows().len()));

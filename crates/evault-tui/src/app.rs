@@ -1,8 +1,10 @@
 //! Deterministic state machine driving the dashboard.
 
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::event::Action;
+use crate::filter::FilterState;
 use crate::provider::{ProviderError, VarProvider, VarSummary};
 
 /// In-session toast displayed at the bottom of the screen.
@@ -59,6 +61,20 @@ pub struct AppState {
     toast: Option<Toast>,
     secrets_visible: bool,
     quit: bool,
+    filter: Option<FilterState>,
+}
+
+/// Outcome of [`AppState::dispatch_key`]: signals whether the caller
+/// (the runtime) should perform an I/O side effect after the state
+/// has been updated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// Continue the event loop without further side effects.
+    Continue,
+    /// Re-fetch rows from the provider; the dispatch translated a
+    /// `Refresh` intent. The runtime owns the provider and is
+    /// responsible for the actual call.
+    RefreshRequested,
 }
 
 impl Default for AppState {
@@ -86,6 +102,7 @@ impl AppState {
             toast: None,
             secrets_visible: false,
             quit: false,
+            filter: None,
         }
     }
 
@@ -112,8 +129,70 @@ impl AppState {
     pub fn refresh<P: VarProvider + ?Sized>(&mut self, provider: &P) -> Result<(), ProviderError> {
         let rows = provider.list()?;
         self.rows = rows;
+        self.rebuild_filter();
         self.clamp_selection();
         Ok(())
+    }
+
+    /// Dispatch a raw key event.
+    ///
+    /// When the filter input is active, characters and Backspace edit
+    /// the needle, Enter accepts (filter stays applied but the input
+    /// is closed), and Esc cancels the filter entirely. Navigation
+    /// keys (Up / Down / `PageUp` / `PageDown`) and Ctrl-C remain bound
+    /// so the user can scroll through results and quit even while
+    /// typing.
+    ///
+    /// When the filter input is **not** active, the key is translated
+    /// via [`Action::from_key`] and dispatched to [`Self::apply`].
+    ///
+    /// Returns [`DispatchOutcome::RefreshRequested`] when the user
+    /// pressed `r` (or otherwise triggered `Action::Refresh`); the
+    /// runtime is responsible for the actual provider call.
+    pub fn dispatch_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        if key.kind != KeyEventKind::Press {
+            return DispatchOutcome::Continue;
+        }
+        if self.is_filter_input_active() {
+            return self.dispatch_filter_input_key(key);
+        }
+        let action = Action::from_key(key);
+        self.apply(action);
+        if matches!(action, Action::Refresh) {
+            DispatchOutcome::RefreshRequested
+        } else {
+            DispatchOutcome::Continue
+        }
+    }
+
+    fn dispatch_filter_input_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            // Universal exit gesture remains bound.
+            KeyCode::Char('c') if ctrl => {
+                self.quit = true;
+            }
+            // Cancel — clear the filter, restore full row set.
+            KeyCode::Esc => self.close_filter(),
+            // Accept — keep filter applied, hide the input box.
+            KeyCode::Enter => {
+                if let Some(filter) = self.filter.as_mut() {
+                    filter.commit();
+                }
+            }
+            // Edit the needle.
+            KeyCode::Backspace => self.filter_pop(),
+            KeyCode::Char(c) if !ctrl => self.filter_push(c),
+            // Navigation through filtered results — arrow / page keys
+            // only; j/k are valid needle characters and must not steal
+            // the keystroke while the input is active.
+            KeyCode::Up => self.select_prev(),
+            KeyCode::Down => self.select_next(),
+            KeyCode::PageUp => self.page(false),
+            KeyCode::PageDown => self.page(true),
+            _ => {}
+        }
+        DispatchOutcome::Continue
     }
 
     /// Apply one [`Action`] to the state.
@@ -154,6 +233,7 @@ impl AppState {
                 // only message visible afterwards.
                 self.toast = None;
             }
+            Action::StartFuzzy => self.open_filter(),
             Action::Noop => {}
             // Phase-1 surfaces: not yet wired to a registry. We surface
             // a toast so the user knows the key was *received* but the
@@ -164,11 +244,78 @@ impl AppState {
             | Action::DeleteVar
             | Action::LinkVar
             | Action::CopyValue
-            | Action::StartFuzzy
             | Action::SwitchProfile
             | Action::NextView => {
                 self.set_info_toast("not implemented in this build");
             }
+        }
+    }
+
+    /// Open the fuzzy filter overlay. If a filter is already active
+    /// the input box is re-opened so the user can keep typing without
+    /// losing the existing needle.
+    pub fn open_filter(&mut self) {
+        if let Some(filter) = self.filter.as_mut() {
+            filter.reopen_input();
+            return;
+        }
+        self.filter = Some(FilterState::new(self.rows.len()));
+        // Reset cursor to top of the filtered view so the user
+        // doesn't "see" an offset from the previous selection.
+        self.table_state
+            .select(if self.rows.is_empty() { None } else { Some(0) });
+    }
+
+    /// Clear the filter and restore the full row set.
+    pub fn close_filter(&mut self) {
+        self.filter = None;
+        self.clamp_selection();
+    }
+
+    fn filter_push(&mut self, c: char) {
+        let haystacks: Vec<&str> = self.rows.iter().map(|v| v.name.as_str()).collect();
+        if let Some(filter) = self.filter.as_mut() {
+            filter.push(c, &haystacks);
+        }
+        self.clamp_selection();
+    }
+
+    fn filter_pop(&mut self) {
+        let haystacks: Vec<&str> = self.rows.iter().map(|v| v.name.as_str()).collect();
+        if let Some(filter) = self.filter.as_mut() {
+            filter.pop(&haystacks);
+        }
+        self.clamp_selection();
+    }
+
+    /// Re-rank the existing filter against the (possibly changed) row
+    /// buffer. Called from [`Self::refresh`]; no-op when no filter is
+    /// active.
+    fn rebuild_filter(&mut self) {
+        if self.filter.is_none() {
+            return;
+        }
+        let haystacks: Vec<&str> = self.rows.iter().map(|v| v.name.as_str()).collect();
+        if let Some(filter) = self.filter.as_mut() {
+            // Rerank: pop+push a no-op character would corrupt the
+            // needle. Easier to reach into the filter and rebuild
+            // directly via the same code path push/pop use. Since we
+            // don't have a public rerank, simulate by popping then
+            // pushing the trailing character if any. For simplicity,
+            // we instead drop and rebuild the FilterState if rows
+            // changed shape.
+            //
+            // Cheaper path: re-rank with the current needle.
+            let needle = filter.needle().to_owned();
+            let input_active = filter.input_active();
+            let mut fresh = FilterState::new(self.rows.len());
+            for c in needle.chars() {
+                fresh.push(c, &haystacks);
+            }
+            if !input_active {
+                fresh.commit();
+            }
+            *filter = fresh;
         }
     }
 
@@ -194,16 +341,75 @@ impl AppState {
         self.quit
     }
 
-    /// Read-only access to the row buffer.
+    /// Read-only access to the full row buffer (filter-independent).
+    /// Use [`Self::visible_row_indices`] / [`Self::visible_rows`] when
+    /// you need the rows currently rendered by the dashboard.
     #[must_use]
     pub fn rows(&self) -> &[VarSummary] {
         &self.rows
     }
 
-    /// Currently selected row index, if any.
+    /// Indices into [`Self::rows`] of the rows currently rendered.
+    ///
+    /// When a filter is applied the indices are in match-score order
+    /// (best score first). Without a filter they are simply
+    /// `0..rows.len()`.
+    #[must_use]
+    pub fn visible_row_indices(&self) -> Vec<usize> {
+        self.filter.as_ref().map_or_else(
+            || (0..self.rows.len()).collect(),
+            |f| f.visible_indices().to_vec(),
+        )
+    }
+
+    /// Iterator over the rows currently rendered by the dashboard.
+    pub fn visible_rows(&self) -> impl Iterator<Item = &VarSummary> {
+        self.visible_row_indices()
+            .into_iter()
+            .filter_map(move |i| self.rows.get(i))
+    }
+
+    /// Whether the fuzzy-filter input box is currently capturing
+    /// keystrokes. While `true` characters edit the needle instead of
+    /// firing actions.
+    #[must_use]
+    pub fn is_filter_input_active(&self) -> bool {
+        self.filter.as_ref().is_some_and(FilterState::input_active)
+    }
+
+    /// Whether a filter is currently applied (regardless of whether
+    /// the input box is still open).
+    #[must_use]
+    pub const fn is_filter_active(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    /// The current filter needle, if any. Empty string when the user
+    /// has opened the filter but not typed anything yet.
+    #[must_use]
+    pub fn filter_needle(&self) -> Option<&str> {
+        self.filter.as_ref().map(FilterState::needle)
+    }
+
+    /// Visible-row index of the currently-selected row, if any. This
+    /// is the index inside [`Self::visible_rows`], not into
+    /// [`Self::rows`]. Use [`Self::selected_row`] to dereference to
+    /// the underlying [`VarSummary`].
     #[must_use]
     pub const fn selected_index(&self) -> Option<usize> {
         self.table_state.selected()
+    }
+
+    /// The currently selected [`VarSummary`], if any, resolved through
+    /// the active filter.
+    #[must_use]
+    pub fn selected_row(&self) -> Option<&VarSummary> {
+        let visible_idx = self.table_state.selected()?;
+        let absolute_idx = match self.filter.as_ref() {
+            Some(f) => *f.visible_indices().get(visible_idx)?,
+            None => visible_idx,
+        };
+        self.rows.get(absolute_idx)
     }
 
     /// Read-only access to the [`TableState`]. Useful for tests that
@@ -269,30 +475,41 @@ impl AppState {
         };
     }
 
+    /// Visible-row count: the rendered length of the dashboard.
+    /// When a filter is applied this is the count of *matching* rows;
+    /// otherwise it equals `rows.len()`. Navigation operates in this
+    /// space so the cursor never lands on a hidden row.
+    fn visible_len(&self) -> usize {
+        self.filter
+            .as_ref()
+            .map_or_else(|| self.rows.len(), |f| f.visible_indices().len())
+    }
+
     fn clamp_selection(&mut self) {
-        if self.rows.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             self.table_state.select(None);
             return;
         }
-        let max = self.rows.len().saturating_sub(1);
+        let max = len - 1;
         let cur = self.table_state.selected().unwrap_or(0).min(max);
         self.table_state.select(Some(cur));
     }
 
     fn select_next(&mut self) {
-        if self.rows.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             return;
         }
-        let len = self.rows.len();
         let next = self.table_state.selected().map_or(0, |i| (i + 1) % len);
         self.table_state.select(Some(next));
     }
 
     fn select_prev(&mut self) {
-        if self.rows.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             return;
         }
-        let len = self.rows.len();
         let prev = self
             .table_state
             .selected()
@@ -302,14 +519,14 @@ impl AppState {
 
     #[allow(clippy::missing_const_for_fn)]
     fn select_first(&mut self) {
-        if !self.rows.is_empty() {
+        if self.visible_len() > 0 {
             self.table_state.select(Some(0));
         }
     }
 
     #[allow(clippy::missing_const_for_fn)]
     fn select_last(&mut self) {
-        if let Some(last) = self.rows.len().checked_sub(1) {
+        if let Some(last) = self.visible_len().checked_sub(1) {
             self.table_state.select(Some(last));
         }
     }
@@ -320,10 +537,10 @@ impl AppState {
         // rows is a sensible compromise that works on small and large
         // terminals alike.
         const STRIDE: usize = 10;
-        if self.rows.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             return;
         }
-        let len = self.rows.len();
         let cur = self.table_state.selected().unwrap_or(0);
         let new = if down {
             cur.saturating_add(STRIDE).min(len - 1)
@@ -535,5 +752,154 @@ mod tests {
         assert_eq!(app.selected_index(), Some(2));
         app.apply(Action::PageUp);
         assert_eq!(app.selected_index(), Some(0));
+    }
+
+    // ─── Phase 2a: fuzzy filter ───────────────────────────────────
+
+    fn press(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn five_rows() -> StaticProvider {
+        StaticProvider(vec![
+            summary("DATABASE_URL"),
+            summary("API_KEY"),
+            summary("DB_HOST"),
+            summary("NODE_ENV"),
+            summary("PORT"),
+        ])
+    }
+
+    #[test]
+    fn start_fuzzy_opens_filter_with_empty_needle() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        assert!(app.is_filter_active());
+        assert!(app.is_filter_input_active());
+        assert_eq!(app.filter_needle(), Some(""));
+        // Empty needle shows every row.
+        assert_eq!(app.visible_rows().count(), 5);
+    }
+
+    #[test]
+    fn typing_filter_chars_narrows_visible_rows() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        // Dispatch each char through dispatch_key so the filter-input
+        // routing path is exercised.
+        app.dispatch_key(press(KeyCode::Char('d')));
+        app.dispatch_key(press(KeyCode::Char('b')));
+        let visible: Vec<_> = app.visible_rows().map(|v| v.name.clone()).collect();
+        assert!(visible.contains(&"DATABASE_URL".to_string()));
+        assert!(visible.contains(&"DB_HOST".to_string()));
+        assert!(!visible.contains(&"API_KEY".to_string()));
+        assert!(!visible.contains(&"PORT".to_string()));
+        assert_eq!(app.filter_needle(), Some("db"));
+    }
+
+    #[test]
+    fn backspace_pops_needle_and_widens_visible_set() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('x')));
+        assert_eq!(app.visible_rows().count(), 0);
+        app.dispatch_key(press(KeyCode::Backspace));
+        assert_eq!(app.filter_needle(), Some(""));
+        assert_eq!(app.visible_rows().count(), 5);
+    }
+
+    #[test]
+    fn enter_commits_filter_input_but_keeps_filter_applied() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('p')));
+        app.dispatch_key(press(KeyCode::Enter));
+        assert!(app.is_filter_active());
+        assert!(!app.is_filter_input_active());
+        // The filter is still narrowing the view.
+        assert!(app.visible_rows().count() < 5);
+        // Char keys now go through the Action path again.
+        app.dispatch_key(press(KeyCode::Char('s')));
+        assert!(app.secrets_visible());
+    }
+
+    #[test]
+    fn esc_clears_the_filter_entirely() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('p')));
+        app.dispatch_key(press(KeyCode::Esc));
+        assert!(!app.is_filter_active());
+        assert_eq!(app.visible_rows().count(), 5);
+    }
+
+    #[test]
+    fn selection_clamps_to_visible_count_on_narrow() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::MoveBottom); // select row 4 (PORT)
+        assert_eq!(app.selected_index(), Some(4));
+        app.apply(Action::StartFuzzy);
+        // Type something that filters down to only a handful of rows.
+        app.dispatch_key(press(KeyCode::Char('d')));
+        app.dispatch_key(press(KeyCode::Char('b')));
+        // Visible count is 2; selection must clamp.
+        let visible = app.visible_rows().count();
+        assert!(visible <= 2);
+        assert!(app.selected_index().is_some_and(|i| i < visible));
+    }
+
+    #[test]
+    fn selected_row_resolves_through_filter() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        // Filter narrows to rows containing "API".
+        app.dispatch_key(press(KeyCode::Char('a')));
+        app.dispatch_key(press(KeyCode::Char('p')));
+        // The selected row should now be API_KEY (the best match for
+        // "ap") rather than whatever absolute index 0 points to.
+        let selected = app.selected_row().expect("a row should be selected");
+        assert_eq!(selected.name, "API_KEY");
+    }
+
+    #[test]
+    fn ctrl_c_still_quits_while_filter_input_active() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        app.dispatch_key(ctrl_c);
+        assert!(app.quit_requested());
+    }
+
+    #[test]
+    fn refresh_request_is_signalled_when_filter_is_off() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        let outcome = app.dispatch_key(press(KeyCode::Char('r')));
+        assert_eq!(outcome, DispatchOutcome::RefreshRequested);
+    }
+
+    #[test]
+    fn refresh_rebuilds_filter_against_new_rows() {
+        let mut app = AppState::new();
+        app.refresh(&five_rows()).unwrap();
+        app.apply(Action::StartFuzzy);
+        app.dispatch_key(press(KeyCode::Char('d')));
+        let before = app.visible_rows().count();
+        // Shrink the underlying data and refresh.
+        let shrunk = StaticProvider(vec![summary("DATABASE_URL")]);
+        app.refresh(&shrunk).unwrap();
+        // Filter must still be applied and re-ranked against the new rows.
+        assert!(app.is_filter_active());
+        assert_eq!(app.filter_needle(), Some("d"));
+        let after = app.visible_rows().count();
+        assert!(after <= before);
     }
 }

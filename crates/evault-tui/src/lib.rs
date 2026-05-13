@@ -45,12 +45,13 @@ mod app;
 mod components;
 mod error;
 mod event;
+mod filter;
 mod provider;
 mod runtime;
 mod theme;
 mod views;
 
-pub use app::AppState;
+pub use app::{AppState, DispatchOutcome};
 pub use error::TuiError;
 pub use event::Action;
 pub use provider::{ProviderError, VarProvider, VarSummary};
