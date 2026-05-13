@@ -1,4 +1,8 @@
 //! Help overlay listing every key binding.
+//!
+//! **Keep in sync with [`crate::event::Action::from_key`].** The two
+//! tables are maintained by hand; renaming or adding a binding
+//! requires updating both.
 
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -31,8 +35,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         ("Tab", "next view"),
         ("r", "refresh"),
         ("?", "toggle this help"),
-        ("Esc", "close overlay (or quit if none)"),
+        ("Esc", "dismiss toast / overlay (or quit)"),
         ("q", "quit"),
+        ("Ctrl+C", "quit"),
     ];
 
     let key_style = Style::new().fg(theme.accent);

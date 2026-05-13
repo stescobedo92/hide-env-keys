@@ -16,18 +16,41 @@ use crate::theme::Theme;
 /// overlay. The runtime calls this from inside `terminal.draw(...)`.
 pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let area = frame.area();
-    let [body, status] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(area);
+
+    // Layout: dashboard body | toast row (only when needed) | status.
+    // The toast row is fixed-height 1 and pinned directly above the
+    // status bar so it never clobbers the dashboard's bottom border
+    // or the status hints below it.
+    let show_toast = app.toast_text().is_some();
+    let constraints: &[Constraint] = if show_toast {
+        &[
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]
+    } else {
+        &[Constraint::Min(1), Constraint::Length(1)]
+    };
+    let regions = Layout::vertical(constraints).split(area);
+    // `split` always returns `constraints.len()` rects so the indexing
+    // below is guaranteed in-bounds — but we still use `get` and a
+    // graceful early-return to satisfy `clippy::indexing_slicing`.
+    let Some(&body) = regions.first() else { return };
+    let Some(&status) = regions.last() else {
+        return;
+    };
 
     dashboard::render(frame, body, app, theme);
     statusbar::render(frame, status, app, theme);
 
-    if app.help_visible() {
-        help::render(frame, centered(area, 60, 70), theme);
+    if show_toast {
+        if let Some(&toast_area) = regions.get(1) {
+            toast::render(frame, toast_area, app, theme);
+        }
     }
 
-    if app.toast_text().is_some() {
-        let toast_area = bottom_strip(area, 1);
-        toast::render(frame, toast_area, app, theme);
+    if app.help_visible() {
+        help::render(frame, centered(area, 60, 70), theme);
     }
 }
 
@@ -46,16 +69,4 @@ fn centered(outer: Rect, pct_x: u16, pct_y: u16) -> Rect {
     ])
     .areas(mid_v);
     mid_h
-}
-
-/// A 1-line strip pinned to the bottom of `outer`, above the status
-/// bar so the toast does not clobber it.
-fn bottom_strip(outer: Rect, lines: u16) -> Rect {
-    let height = lines.saturating_add(1).min(outer.height);
-    Rect {
-        x: outer.x,
-        y: outer.y + outer.height.saturating_sub(height),
-        width: outer.width,
-        height: lines.min(outer.height),
-    }
 }

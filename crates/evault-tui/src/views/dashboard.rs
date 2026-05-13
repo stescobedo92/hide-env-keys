@@ -12,13 +12,17 @@ use crate::provider::VarSummary;
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, theme: &Theme) {
+    // Column header explicitly notes the timezone so the UPDATED
+    // values cannot be mistaken for local time. Display values come
+    // straight from the underlying `OffsetDateTime` without
+    // conversion — see `format_short_date` below.
     let header = Row::new(vec![
         Cell::from("NAME"),
         Cell::from("GROUP"),
         Cell::from("KIND"),
         Cell::from("LEN"),
         Cell::from("PROJ"),
-        Cell::from("UPDATED"),
+        Cell::from("UPDATED (UTC)"),
     ])
     .style(theme.header())
     .bottom_margin(1);

@@ -1,5 +1,6 @@
 //! Terminal lifecycle and event loop.
 
+use std::io;
 use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event};
@@ -26,11 +27,18 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// guarantees the restore happens whether the loop returns `Ok`,
 /// returns `Err`, or panics.
 ///
+/// `provider` is **consumed** for the duration of the session: the
+/// TUI takes ownership and drops it on return, so callers cannot
+/// reuse the same instance for a second session. Change the signature
+/// to `&P` if you need a longer-lived provider.
+///
 /// # Errors
 /// Returns [`TuiError::Terminal`] if terminal I/O fails (raw-mode
-/// toggling, drawing, event reading). Returns [`TuiError::Provider`]
-/// only if the *initial* refresh fails; subsequent refresh errors are
-/// surfaced as a toast and the loop continues.
+/// toggling, drawing, event reading). Transient `ErrorKind::Interrupted`
+/// errors (e.g. signal-interrupted `poll`) are retried internally and
+/// do not surface. Returns [`TuiError::Provider`] only if the *initial*
+/// refresh fails; subsequent refresh errors are surfaced as a sticky
+/// error toast and the loop continues.
 ///
 /// # Examples
 ///
@@ -47,18 +55,29 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 #[allow(clippy::needless_pass_by_value)]
 pub fn run_tui<P: VarProvider>(provider: P) -> Result<(), TuiError> {
     let mut terminal = ratatui::try_init()?;
-    let result = event_loop(&mut terminal, &provider);
-    // `try_restore` returns its own io::Error; if the loop also failed
-    // we keep the loop error and surface the restore error through
-    // ratatui's default panic-hook reporter on stderr (which `restore`
-    // already does internally).
-    if let Err(restore_err) = ratatui::try_restore() {
-        return match result {
-            Ok(()) => Err(TuiError::Terminal(restore_err)),
-            Err(prior) => Err(prior),
-        };
+    let loop_result = event_loop(&mut terminal, &provider);
+
+    // ALWAYS attempt to restore. The restore-error precedence policy
+    // is: if the loop succeeded, surface a restore failure; if the
+    // loop already failed, log the restore failure to stderr (raw
+    // mode is presumably broken anyway, so the print will reach the
+    // user's reset shell) and propagate the *original* loop error so
+    // the user sees the real cause.
+    match (loop_result, ratatui::try_restore()) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(restore_err)) => Err(TuiError::Terminal(restore_err)),
+        (Err(loop_err), Ok(())) => Err(loop_err),
+        (Err(loop_err), Err(restore_err)) => {
+            // Best-effort visibility: the user's terminal may be in
+            // an inconsistent state. We use stderr because logging
+            // crates are not a dependency of this layer.
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("evault-tui: terminal restore failed after loop error: {restore_err}");
+            }
+            Err(loop_err)
+        }
     }
-    result
 }
 
 fn event_loop<P: VarProvider + ?Sized>(
@@ -75,19 +94,52 @@ fn event_loop<P: VarProvider + ?Sized>(
     while !app.quit_requested() {
         terminal.draw(|frame| views::render(frame, &mut app, &theme))?;
 
-        if event::poll(POLL_INTERVAL)? {
-            if let Event::Key(key) = event::read()? {
+        let polled = match event::poll(POLL_INTERVAL) {
+            Ok(b) => b,
+            // EINTR is non-fatal: a signal arrived during `poll`
+            // (SIGWINCH on resize, SIGCONT after a stop, debugger
+            // attach). Treat the interruption as "no event"; the
+            // outer loop will re-draw and try again.
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(TuiError::Terminal(e)),
+        };
+        if !polled {
+            continue;
+        }
+        let ev = match event::read() {
+            Ok(ev) => ev,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(TuiError::Terminal(e)),
+        };
+
+        // We match all variants explicitly so the choice to ignore
+        // resize / mouse / focus / paste is auditable rather than an
+        // implicit drop via `if let Event::Key(_) = ...`.
+        #[allow(clippy::match_same_arms)]
+        match ev {
+            Event::Key(key) => {
                 let action = Action::from_key(key);
                 app.apply(action);
                 if matches!(action, Action::Refresh) {
-                    // For Refresh we re-fetch immediately; runtime
-                    // failures become a toast so the user can keep
-                    // working from the last-known-good buffer.
-                    if let Err(e) = app.refresh(provider) {
-                        app.set_error_toast(e.to_string());
+                    // `apply` already cleared any toast. We re-fetch
+                    // here so the side-effect lives at the boundary
+                    // that owns the provider. On success surface a
+                    // positive confirmation; on failure the error
+                    // toast is sticky and survives further input.
+                    match app.refresh(provider) {
+                        Ok(()) => {
+                            app.set_info_toast(format!("refreshed ({} vars)", app.rows().len()));
+                        }
+                        Err(e) => app.set_error_toast(e.to_string()),
                     }
                 }
             }
+            // Resize: the loop redraws on every iteration anyway, so
+            // the new dimensions are picked up on the next `draw()`.
+            Event::Resize(_, _) => {}
+            // Mouse, focus, paste, etc. — not yet bound. Phase 2
+            // will wire mouse selection and paste-into-editor.
+            _ => {}
         }
     }
 

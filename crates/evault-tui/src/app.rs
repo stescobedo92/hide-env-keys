@@ -6,17 +6,35 @@ use crate::event::Action;
 use crate::provider::{ProviderError, VarProvider, VarSummary};
 
 /// In-session toast displayed at the bottom of the screen.
+///
+/// `Toast` is part of the *crate*-internal API. External callers
+/// inspect toast state via [`AppState::toast_text`] /
+/// [`AppState::toast_is_error`] and cannot construct or pattern-match
+/// on the inner kind directly. Keeping these types private lets the
+/// toast model evolve (e.g. severity levels, timeouts) without an API
+/// break.
+#[allow(clippy::redundant_pub_crate)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Toast {
+pub(crate) struct Toast {
     pub(crate) text: String,
     pub(crate) kind: ToastKind,
 }
 
+/// Whether a toast represents a user-recoverable info message or an
+/// error worth keeping on-screen until explicitly dismissed.
+///
+/// See [`Toast`] — crate-internal.
+#[allow(clippy::redundant_pub_crate)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToastKind {
-    /// Neutral, informational message.
+pub(crate) enum ToastKind {
+    /// Neutral, informational message. Auto-dismissed on the next
+    /// non-`Noop` interaction so it does not pile up in front of the
+    /// user.
     Info,
     /// Failure surfaced from the provider or another subsystem.
+    /// Sticky: only dismissed by an explicit `Action::Dismiss` or
+    /// `Action::Refresh` so the user has time to read the message
+    /// even if they keep typing.
     Error,
 }
 
@@ -53,14 +71,17 @@ impl AppState {
     /// Construct an empty state with no rows loaded yet.
     ///
     /// Call [`Self::refresh`] before rendering for the first time to
-    /// populate the dashboard.
+    /// populate the dashboard. Until then [`Self::selected_index`]
+    /// returns `None` (rather than `Some(0)` pointing at non-existent
+    /// row 0) so callers cannot accidentally index into an empty
+    /// buffer.
     #[must_use]
     pub fn new() -> Self {
-        let mut table_state = TableState::default();
-        table_state.select(Some(0));
+        // Selection begins at `None`. `clamp_selection` (run from
+        // `refresh`) re-anchors to row 0 once rows are loaded.
         Self {
             rows: Vec::new(),
-            table_state,
+            table_state: TableState::default(),
             overlay: Overlay::None,
             toast: None,
             secrets_visible: false,
@@ -68,12 +89,23 @@ impl AppState {
         }
     }
 
-    /// Re-read rows from `provider` and clamp the selection.
+    /// Re-read rows from `provider` and re-anchor the selection.
     ///
-    /// On success the dashboard's row buffer is replaced. On failure
-    /// the previous rows are preserved and the error is returned
-    /// unchanged — the runtime decides whether to display it as a
-    /// toast.
+    /// On success the dashboard's row buffer is replaced. The cursor
+    /// is clamped to `[0, rows.len())`: if the previously-selected
+    /// index is still in range it survives; if the new row count is
+    /// smaller the cursor pins to the last surviving row; if the
+    /// dashboard is now empty the cursor is cleared to `None`.
+    ///
+    /// On failure the previous rows are preserved and the error is
+    /// returned unchanged — the runtime decides whether to display it
+    /// as a toast.
+    ///
+    /// Note: re-anchoring is *by index*, not by [`evault_core::model::VarId`].
+    /// In phase 1 the dashboard is read-only, so external mutation
+    /// during a refresh can silently shift the user's selection by one
+    /// row. Phase 2 will track the selected `VarId` and re-anchor by
+    /// identity once CRUD is wired.
     ///
     /// # Errors
     /// Propagates whatever [`ProviderError`] the provider returns.
@@ -88,9 +120,17 @@ impl AppState {
     ///
     /// Side-effect-free: only mutates `self`. The runtime drives this
     /// in a tight loop with each translated key event.
+    ///
+    /// Toast lifecycle: *info* toasts auto-dismiss on any non-`Noop`
+    /// interaction so they do not pile up; *error* toasts are sticky
+    /// and only cleared by [`Action::Dismiss`] or [`Action::Refresh`]
+    /// so a user typing fast cannot lose a failure notice they never
+    /// had a chance to read.
     pub fn apply(&mut self, action: Action) {
-        // Any meaningful interaction dismisses a stale toast.
-        if !matches!(action, Action::Noop) {
+        // Auto-dismiss INFO toasts on any non-Noop action *before*
+        // dispatch so the current action can set its own toast which
+        // will survive. Error toasts persist until explicitly handled.
+        if !matches!(action, Action::Noop) && !self.toast_is_error() {
             self.toast = None;
         }
         match action {
@@ -106,6 +146,14 @@ impl AppState {
             Action::ToggleSecretVisibility => {
                 self.secrets_visible = !self.secrets_visible;
             }
+            Action::Refresh => {
+                // The runtime owns the refresh side-effect (it owns
+                // the provider). Here we just clear any toast so the
+                // runtime's post-refresh toast — whether the success
+                // confirmation or an error from the provider — is the
+                // only message visible afterwards.
+                self.toast = None;
+            }
             Action::Noop => {}
             // Phase-1 surfaces: not yet wired to a registry. We surface
             // a toast so the user knows the key was *received* but the
@@ -118,8 +166,7 @@ impl AppState {
             | Action::CopyValue
             | Action::StartFuzzy
             | Action::SwitchProfile
-            | Action::NextView
-            | Action::Refresh => {
+            | Action::NextView => {
                 self.set_info_toast("not implemented in this build");
             }
         }
@@ -200,12 +247,19 @@ impl AppState {
         self.toast.as_ref()
     }
 
-    const fn dismiss(&mut self) {
+    fn dismiss(&mut self) {
+        // Cascade: toast → overlay → quit. A sticky error toast must
+        // be cleared first so users have a way to acknowledge it
+        // without leaving the app.
+        if self.toast.is_some() {
+            self.toast = None;
+            return;
+        }
         if matches!(self.overlay, Overlay::Help) {
             self.overlay = Overlay::None;
-        } else {
-            self.quit = true;
+            return;
         }
+        self.quit = true;
     }
 
     const fn toggle_help(&mut self) {
@@ -325,6 +379,15 @@ mod tests {
     }
 
     #[test]
+    fn selection_is_none_before_first_refresh() {
+        // Invariant: an `AppState` that has never been refreshed must
+        // not advertise a selection (would point at non-existent row 0).
+        let app = AppState::new();
+        assert!(app.rows().is_empty());
+        assert_eq!(app.selected_index(), None);
+    }
+
+    #[test]
     fn refresh_with_empty_provider_clears_selection() {
         let mut app = AppState::new();
         app.refresh(&three_rows()).unwrap();
@@ -406,12 +469,53 @@ mod tests {
     }
 
     #[test]
-    fn toast_dismissed_on_next_interaction() {
+    fn info_toast_dismissed_on_next_interaction() {
         let mut app = AppState::new();
         app.refresh(&three_rows()).unwrap();
         app.set_info_toast("hi");
         app.apply(Action::MoveDown);
         assert!(app.toast_text().is_none());
+    }
+
+    /// Error toasts must survive navigation so a user typing fast
+    /// (e.g. holding `j` to scroll) cannot lose a failure notice
+    /// before reading it. Only explicit `Dismiss` / `Refresh` clears
+    /// an error.
+    #[test]
+    fn error_toast_survives_navigation_and_help_toggle() {
+        let mut app = AppState::new();
+        app.refresh(&three_rows()).unwrap();
+        app.set_error_toast("backend exploded");
+        app.apply(Action::MoveDown);
+        assert_eq!(app.toast_text(), Some("backend exploded"));
+        app.apply(Action::ToggleHelp);
+        assert_eq!(app.toast_text(), Some("backend exploded"));
+        // Explicit dismiss clears it. Because the toast is present,
+        // `Dismiss` consumes it instead of closing the help overlay,
+        // so help stays visible.
+        app.apply(Action::Dismiss);
+        assert!(app.toast_text().is_none());
+        assert!(app.help_visible());
+    }
+
+    /// `Action::Refresh` is *not* a stub: it MUST clear any toast so
+    /// the runtime's post-refresh success/failure message is the only
+    /// thing visible afterwards. Previously this action set a
+    /// "not implemented" info toast that lingered on every successful
+    /// runtime refresh.
+    #[test]
+    fn refresh_action_clears_pre_existing_toast() {
+        let mut app = AppState::new();
+        app.set_info_toast("stale info");
+        app.apply(Action::Refresh);
+        assert!(app.toast_text().is_none());
+
+        app.set_error_toast("stale error");
+        app.apply(Action::Refresh);
+        assert!(
+            app.toast_text().is_none(),
+            "Refresh must also clear sticky error toasts"
+        );
     }
 
     #[test]

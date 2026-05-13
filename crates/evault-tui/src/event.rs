@@ -10,6 +10,10 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 ///
 /// Unknown / unbound keys translate to [`Action::Noop`] so callers can
 /// route them to view-local handlers (e.g. a text-input widget).
+///
+/// **Help overlay parity:** every binding here must have a matching
+/// row in `crate::views::help`. The two tables are maintained by
+/// hand; keep them in sync when adding or renaming keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Action {
     /// Request the program to exit immediately.
@@ -78,6 +82,12 @@ impl Action {
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
+            // Ctrl-C is the universal "I want out" gesture. Binding
+            // it to Quit also prevents the parent shell's SIGINT
+            // handler from delivering the signal in scenarios where
+            // crossterm has not captured Ctrl-C — which would leave
+            // raw mode enabled and corrupt the terminal.
+            KeyCode::Char('c') if ctrl => Self::Quit,
             KeyCode::Char('q') => Self::Quit,
             KeyCode::Esc => Self::Dismiss,
             KeyCode::Char('j') | KeyCode::Down => Self::MoveDown,
@@ -153,6 +163,17 @@ mod tests {
         assert_eq!(Action::from_key(ctrl_f), Action::StartFuzzy);
         // Plain 'f' without ctrl is unbound.
         assert_eq!(Action::from_key(press(KeyCode::Char('f'))), Action::Noop);
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        // Universal "I want out" gesture. Must always quit cleanly
+        // through the regular state path so raw mode and the
+        // alternate screen are properly torn down.
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(Action::from_key(ctrl_c), Action::Quit);
+        // Plain 'c' is still unbound.
+        assert_eq!(Action::from_key(press(KeyCode::Char('c'))), Action::Noop);
     }
 
     #[test]
