@@ -46,6 +46,12 @@ pub trait MetadataStore: Send + Sync {
 
     /// Delete a [`Var`] by id. No-op if the variable does not exist.
     ///
+    /// **Implementations MUST atomically cascade** the deletion to the
+    /// plain-value side table and to every project↔var linkage that
+    /// references this variable. The service layer relies on this atomicity
+    /// to guarantee that a variable becomes invisible to every read path in
+    /// a single observable step.
+    ///
     /// # Errors
     /// Returns [`MetadataError::Backend`] on storage failures.
     fn delete_var(&self, id: VarId) -> Result<(), MetadataError>;
@@ -100,6 +106,10 @@ pub trait MetadataStore: Send + Sync {
 
     /// Delete a project and all of its linkage records. No-op if the project
     /// does not exist.
+    ///
+    /// **Implementations MUST atomically cascade** the deletion to every
+    /// linkage that references this project, matching the
+    /// [`Self::delete_var`] contract.
     ///
     /// # Errors
     /// Returns [`MetadataError::Backend`] on storage failures.

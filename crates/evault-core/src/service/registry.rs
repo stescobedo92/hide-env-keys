@@ -171,6 +171,20 @@ where
     /// so that a partial failure cannot leave metadata advertising a
     /// length that no value in storage actually has.
     ///
+    /// # Atomicity (v1)
+    /// The kind on the metadata record is trusted to route the write. If
+    /// the metadata is corrupted with a kind that disagrees with the
+    /// actual stored value, this method will route to the corrupted
+    /// kind's tier and may leak the prior value to the opposite tier.
+    /// Subsequent `get_value` calls then surface
+    /// [`CoreError::TierMismatch`]. Hardening this path (probe-and-clear
+    /// the opposite tier defensively) is scheduled for the v1.1 `SQLCipher`
+    /// landing.
+    ///
+    /// A failure of the audit append after a successful value write is
+    /// reported as an error but the value is persisted; same v1 limitation
+    /// as documented on [`Self::create_var`].
+    ///
     /// # Errors
     /// Returns [`MetadataError::VarNotFound`] if the variable does not
     /// exist, [`MetadataError::Invalid`] if the value is empty, or any
@@ -206,9 +220,11 @@ where
     /// bypassed the service layer's normal routing.
     ///
     /// # Errors
-    /// Returns any propagated storage error. Returns `Ok(None)` if the
-    /// variable does not exist or has no value in the expected tier and
-    /// none in the opposite tier either.
+    /// Returns any propagated storage error.
+    /// Returns [`CoreError::TierMismatch`] when the variable's metadata
+    /// kind disagrees with where the value actually lives (corruption
+    /// detection). Returns `Ok(None)` if the variable does not exist or
+    /// has no value in either tier.
     pub fn get_value(&self, id: VarId) -> Result<Option<SecretString>, CoreError> {
         let Some(var) = self.metadata.get_var(id)? else {
             return Ok(None);
@@ -382,6 +398,14 @@ where
     /// actually removed**. A call on an absent triple is a successful
     /// no-op and is not audited (avoids audit-log pollution that would
     /// degrade forensic value).
+    ///
+    /// # Atomicity (v1)
+    /// A failure of the audit append after a successful linkage removal
+    /// is surfaced as an error but the linkage is gone. Callers should
+    /// not retry, since a retry of `unlink_var` would return `Ok(())`
+    /// (the triple is now absent). Same v1 limitation as
+    /// [`Self::create_var`]; a dedicated `AuditWriteFailed` variant is
+    /// scheduled for v1.1.
     ///
     /// # Errors
     /// Propagates storage failures.
