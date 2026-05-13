@@ -58,6 +58,83 @@ fn materialize_quotes_values_with_special_chars() {
 }
 
 #[test]
+fn materialize_rejects_value_with_newline() {
+    // Multi-line secrets (CRLF injection vector) MUST be rejected up-front.
+    let dir = TempDir::new().expect("tmpdir");
+    let path = dir.path().join(".env");
+    let err = EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("TOKEN", "abc\nADMIN=true")]))
+        .expect_err("should reject newline");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("newline"), "expected newline mention: {msg}");
+    assert!(msg.contains("TOKEN"), "expected key mention: {msg}");
+    // CRITICAL: no part of the value text after the newline should appear
+    // in the error string (would leak secret material).
+    assert!(!msg.contains("ADMIN=true"), "value text leaked: {msg}");
+    // No file should have been written.
+    assert!(!path.exists(), ".env should not exist after rejection");
+}
+
+#[test]
+fn materialize_rejects_value_with_carriage_return() {
+    // CR alone (Windows-style line endings without LF) is also a vector.
+    let dir = TempDir::new().expect("tmpdir");
+    let path = dir.path().join(".env");
+    let err = EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("TOKEN", "abc\rADMIN=true")]))
+        .expect_err("should reject CR");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("carriage return"),
+        "expected CR mention: {msg}"
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn materialize_rejects_value_with_nul_byte() {
+    let dir = TempDir::new().expect("tmpdir");
+    let path = dir.path().join(".env");
+    let err = EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("TOKEN", "abc\0xyz")]))
+        .expect_err("should reject NUL");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("NUL"), "expected NUL mention: {msg}");
+    assert!(!path.exists());
+}
+
+#[test]
+fn materialize_accepts_tab_in_value() {
+    // Tab is the only control char we allow — common in legitimate
+    // structured values like base64 with embedded whitespace.
+    let dir = TempDir::new().expect("tmpdir");
+    let path = dir.path().join(".env");
+    EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("FOO", "a\tb")]))
+        .expect("tab should be quoted, not rejected");
+    let body = std::fs::read_to_string(&path).expect("read");
+    assert!(body.contains("FOO=\"a\tb\""));
+}
+
+#[test]
+fn materialize_rejects_invalid_key_name() {
+    let dir = TempDir::new().expect("tmpdir");
+    let path = dir.path().join(".env");
+    // Spaces in keys break the .env format entirely.
+    let err = EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("WITH SPACE", "v")]))
+        .expect_err("should reject space in key");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("invalid key"), "expected invalid key: {msg}");
+    // Keys starting with a digit are also rejected by Var::validate_name.
+    let err = EnvFileMaterializer::new()
+        .materialize(&path, &env(&[("1BAD", "v")]))
+        .expect_err("should reject leading digit");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("invalid key"), "expected invalid key: {msg}");
+}
+
+#[test]
 fn materialize_does_not_quote_plain_values() {
     let dir = TempDir::new().expect("tmpdir");
     let path = dir.path().join(".env");

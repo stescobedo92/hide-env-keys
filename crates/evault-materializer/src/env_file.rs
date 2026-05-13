@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use evault_core::error::MaterializerError;
+use evault_core::model::Var;
 use evault_core::traits::Materializer;
 
 use crate::gitignore::ensure_gitignore_entry;
@@ -38,12 +39,19 @@ impl Materializer for EnvFileMaterializer {
         path: &Path,
         environment: &BTreeMap<String, String>,
     ) -> Result<(), MaterializerError> {
-        // Ensure the parent directory exists. Without this, write of the
-        // tempfile fails with NotFound which the user reads as "did
-        // evault eat my project?".
+        // Validate every key and value BEFORE touching disk. Any single
+        // invalid entry rejects the whole materialization — partial files
+        // are never written.
+        validate_environment(environment)?;
+
+        // Ensure the parent directory exists. Map the OS error to a
+        // category label so the OS error message and any echoed path
+        // don't leak through the public error.
         let parent = parent_dir(path);
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(&parent)?;
+            fs::create_dir_all(&parent).map_err(|e| {
+                MaterializerError::Backend(format!("create parent dir: {:?}", e.kind()))
+            })?;
         }
 
         // Encode the body. `BTreeMap` iteration is alphabetic by key so
@@ -61,13 +69,56 @@ impl Materializer for EnvFileMaterializer {
             )));
         }
 
-        // Best-effort `.gitignore` update; failure here is reported but
-        // the .env has already been written successfully.
-        ensure_gitignore_entry(&parent, path)
-            .map_err(|e| MaterializerError::Backend(format!("gitignore: {e}")))?;
+        // Update `.gitignore`. A failure here is dangerous: the .env has
+        // already landed and may be picked up by `git add .`, leaking
+        // secrets. We roll back the .env (best-effort delete) and surface
+        // the failure to the caller so they can fix the underlying issue
+        // and retry.
+        if let Err(e) = ensure_gitignore_entry(&parent, path) {
+            let _ = fs::remove_file(path);
+            return Err(MaterializerError::Backend(format!(
+                "gitignore: {:?}; .env rolled back to avoid leaving an \
+                 unignored secret file on disk",
+                e.kind()
+            )));
+        }
 
         Ok(())
     }
+}
+
+/// Reject any key or value whose shape could break the `.env` format or
+/// open an injection vector.
+///
+/// - Keys must satisfy [`Var::validate_name`] — the same rules the
+///   registry enforces. Keys ARE included in the error message (they are
+///   not secret material per `evault`'s design).
+/// - Values must NOT contain any control character. Newlines in
+///   particular allow `KEY=...\nOTHER=evil` injection because dotenv
+///   parsers handle multi-line quoted values inconsistently. Multi-line
+///   secrets (PEM keys, JSON blobs) should be base64-encoded or stored
+///   under separate keys.
+fn validate_environment(env: &BTreeMap<String, String>) -> Result<(), MaterializerError> {
+    for (key, value) in env {
+        Var::validate_name(key)
+            .map_err(|_| MaterializerError::Backend(format!("invalid key name: {key:?}")))?;
+        if let Some(bad) = value.chars().find(|c| c.is_control() && *c != '\t') {
+            // Echo the key (not secret) and the byte category. Never the
+            // surrounding value text.
+            let kind = match bad {
+                '\n' => "newline",
+                '\r' => "carriage return",
+                '\0' => "NUL byte",
+                _ => "control byte",
+            };
+            return Err(MaterializerError::Backend(format!(
+                "value for key {key:?} contains a {kind}; \
+                 .env cannot represent it portably — base64-encode the \
+                 value or split it across separate keys"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Encode an environment as the body of a `.env` file with the
@@ -87,15 +138,17 @@ fn encode(environment: &BTreeMap<String, String>) -> String {
 
 /// Quote a value if it contains any character that would alter parsing.
 ///
-/// The conservative rule used here matches every common dotenv parser:
-/// quote if the value contains whitespace, `=`, `"`, `'`, or starts with
-/// a `#`. We always use double quotes and escape embedded `"` and `\`.
+/// The input has already been validated by [`validate_environment`] so
+/// no control characters (other than `\t`) can appear here. The function
+/// double-quotes when the value is empty, starts with `#`, or contains
+/// whitespace, `=`, `"`, or `'`; embedded `"` and `\` are backslash-
+/// escaped inside the quoted form. Bare values pass through unchanged.
 fn quote_value(value: &str) -> String {
     let needs_quote = value.is_empty()
         || value.starts_with('#')
         || value
             .chars()
-            .any(|c| c == ' ' || c == '\t' || c == '\n' || c == '=' || c == '"' || c == '\'');
+            .any(|c| c == ' ' || c == '\t' || c == '=' || c == '"' || c == '\'');
     if !needs_quote {
         return value.to_owned();
     }
@@ -116,7 +169,9 @@ fn quote_value(value: &str) -> String {
 fn write_tempfile_atomically(tmp: &Path, bytes: &[u8]) -> Result<(), MaterializerError> {
     let result = (|| -> std::io::Result<()> {
         let mut opts = OpenOptions::new();
-        opts.write(true).create_new(true).truncate(false);
+        // `create_new` is O_CREAT|O_EXCL so the file is always brand new.
+        // `truncate` is redundant under this mode.
+        opts.write(true).create_new(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
