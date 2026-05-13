@@ -1092,6 +1092,10 @@ dependencies = [
 [[package]]
 name = "evault-runner"
 version = "0.1.0"
+dependencies = [
+ "evault-core",
+ "tempfile",
+]
 
 [[package]]
 name = "evault-scanner-regex"

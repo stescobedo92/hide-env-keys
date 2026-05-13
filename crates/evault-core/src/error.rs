@@ -154,6 +154,16 @@ pub enum MaterializerError {
 #[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum RunnerError {
+    /// An env key or value supplied to the runner failed validation.
+    /// Specifically: keys must satisfy the same shape as variable names
+    /// (ASCII letter/underscore start, alphanumerics/underscore body);
+    /// values must not contain a NUL byte, which would terminate the
+    /// OS environment block prematurely. The error string carries the
+    /// key (which is not secret per `evault`'s design) and a category
+    /// label, but never the surrounding value text.
+    #[error("invalid env input: {0}")]
+    Invalid(String),
+
     /// Spawning the child process failed.
     #[error("failed to spawn process: {0}")]
     Spawn(String),

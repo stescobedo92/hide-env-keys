@@ -15,3 +15,7 @@ description = "Process runner with injected environment for evault."
 workspace = true
 
 [dependencies]
+evault-core = { path = "../evault-core", version = "0.1" }
+
+[dev-dependencies]
+tempfile = "3"

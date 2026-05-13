@@ -35,8 +35,20 @@ pub trait ProcessRunner: Send + Sync {
     /// the child. Keys in `env` override identically-named keys from the
     /// parent.
     ///
+    /// **Implementors MUST** strip variables matching the `EVAULT_*` prefix
+    /// from the parent environment before applying the overlay, so that
+    /// internal runtime configuration (master key paths, telemetry knobs)
+    /// does not leak into untrusted child processes.
+    ///
+    /// **Implementors MUST** validate every supplied key (same shape as a
+    /// variable name) and reject values containing a NUL byte before
+    /// touching `std::process::Command` — a NUL would terminate the OS
+    /// environment block early and is non-recoverable.
+    ///
     /// # Errors
-    /// Returns [`RunnerError::Spawn`] if the process could not start;
+    /// Returns [`RunnerError::Invalid`] when the env overlay contains a
+    /// malformed key or a value with a NUL byte;
+    /// [`RunnerError::Spawn`] if the process could not start;
     /// [`RunnerError::Io`] for IO failure during execution.
     fn run(
         &self,
