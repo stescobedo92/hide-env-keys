@@ -261,10 +261,19 @@ fn scan_file(
                 // Char-column: count Unicode scalar values BEFORE the
                 // match start. This matches what editors mean by
                 // "column N" and stays stable across multi-byte UTF-8.
-                let column = line
-                    .get(..byte_start)
-                    .map_or(byte_start, |prefix| prefix.chars().count())
-                    + 1;
+                //
+                // `regex::Match::start()` is documented to be a byte
+                // offset that lies on a UTF-8 char boundary into the
+                // haystack, so `.get(..byte_start)` always returns
+                // `Some` for a valid match. We `expect` rather than
+                // silently fall back to `byte_start` (which would
+                // resurrect the byte-vs-char column bug) so a future
+                // refactor that violates the invariant fails loudly.
+                #[allow(clippy::expect_used)]
+                let prefix = line.get(..byte_start).expect(
+                    "regex::Match::start() always lies on a UTF-8 char boundary into the line",
+                );
+                let column = prefix.chars().count() + 1;
                 hits.push(ScanHit {
                     path: PathBuf::from(path),
                     line: line_number,

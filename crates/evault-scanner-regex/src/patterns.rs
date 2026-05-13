@@ -94,17 +94,27 @@ pub fn language_specs() -> Vec<LanguageSpec> {
                 // ${NAME} and its parameter-expansion variants. We
                 // anchor with `${` explicitly so `$()` command
                 // substitution doesn't match. The terminator class
-                // covers every standard bash parameter-expansion form:
-                //   `}`  bare       — `${VAR}`
-                //   `:`  defaults   — `${VAR:-x}`, `${VAR:+x}`, `${VAR:?x}`, `${VAR:o:l}`
-                //   `#`  prefix     — `${VAR#x}`, `${VAR##x}`, `${#VAR}` (length is captured too)
-                //   `%`  suffix     — `${VAR%x}`, `${VAR%%x}`
-                //   `^`  upper case — `${VAR^}`, `${VAR^^}`
-                //   `,`  lower case — `${VAR,}`, `${VAR,,}`
-                //   `/`  substitute — `${VAR/from/to}`
-                //   `!`  indirect   — `${!VAR}` (read as a hit on VAR)
-                //   `[`  array idx  — `${VAR[0]}`
-                compile(&format!(r"\$\{{(?P<name>{IDENT})[:}}#%^,/!\[]")),
+                // covers every standard parameter-expansion form
+                // where NAME comes FIRST inside the braces:
+                //   `}`  bare        — `${VAR}`
+                //   `:`  defaults    — `${VAR:-x}`, `${VAR:+x}`, `${VAR:?x}`, `${VAR:o:l}`
+                //   `-`  use-default — `${VAR-x}`   (POSIX, no leading colon)
+                //   `=`  assign-def  — `${VAR=x}`   (POSIX, no leading colon)
+                //   `+`  use-alt     — `${VAR+x}`   (POSIX, no leading colon)
+                //   `?`  error-set   — `${VAR?msg}` (POSIX, no leading colon)
+                //   `#`  prefix      — `${VAR#x}`, `${VAR##x}`
+                //   `%`  suffix      — `${VAR%x}`, `${VAR%%x}`
+                //   `^`  upper case  — `${VAR^}`, `${VAR^^}`
+                //   `,`  lower case  — `${VAR,}`, `${VAR,,}`
+                //   `/`  substitute  — `${VAR/from/to}`
+                //   `[`  array idx   — `${VAR[0]}`
+                compile(&format!(r"\$\{{(?P<name>{IDENT})[-:}}#%^,/+=?\[]")),
+                // Sigil-prefix forms where the operator comes BEFORE
+                // the identifier: `${!VAR}` (indirect expansion) and
+                // `${#VAR}` (length). The closing brace anchors the
+                // match so that `${#}` (length of `$@`) does not
+                // produce a stray empty hit.
+                compile(&format!(r"\$\{{[!#](?P<name>{IDENT})\}}")),
                 // Bare $NAME at a word boundary. We require uppercase
                 // identifier to keep `$foo` from matching.
                 compile(&format!(r"\$(?P<name>{IDENT})\b")),
@@ -244,18 +254,20 @@ mod tests {
         #[allow(clippy::literal_string_with_formatting_args)]
         let braced_default = "echo ${FOO:-default}";
         assert_eq!(capture_name(&sh[0], braced_default), Some("FOO".into()));
+        // sh[2] is the bare `$NAME` pattern (sh[1] is the sigil-prefix
+        // `${!VAR}` / `${#VAR}` form).
         assert_eq!(
-            capture_name(&sh[1], "echo $DATABASE_URL"),
+            capture_name(&sh[2], "echo $DATABASE_URL"),
             Some("DATABASE_URL".into())
         );
         // Lowercase rejected.
-        assert!(capture_name(&sh[1], "echo $foo").is_none());
+        assert!(capture_name(&sh[2], "echo $foo").is_none());
     }
 
-    /// Every standard bash parameter-expansion terminator should be
+    /// Every standard parameter-expansion terminator should be
     /// matched. These previously fell through `${VAR}` only, causing
-    /// silent undercount on shell scripts using prefix/suffix/case
-    /// operators.
+    /// silent undercount on shell scripts using POSIX-portable forms
+    /// (`${VAR-x}`, `${VAR+x}`, …) or bash prefix/suffix/case operators.
     #[test]
     fn shell_brace_recognises_all_parameter_expansion_forms() {
         let specs = language_specs();
@@ -265,6 +277,7 @@ mod tests {
             .unwrap()
             .patterns;
         let cases = [
+            // bash prefix/suffix/case/substitute/array forms
             ("echo ${PATH#prefix}", "PATH"),
             ("echo ${PATH##prefix}", "PATH"),
             ("echo ${VAR%suffix}", "VAR"),
@@ -273,6 +286,11 @@ mod tests {
             ("echo ${VAR,,}", "VAR"),
             ("echo ${VAR/from/to}", "VAR"),
             ("echo ${VAR[0]}", "VAR"),
+            // POSIX-portable forms without the leading colon
+            ("echo ${VAR-default}", "VAR"),
+            ("echo ${VAR=default}", "VAR"),
+            ("echo ${VAR+alt}", "VAR"),
+            ("echo ${VAR?msg}", "VAR"),
         ];
         for (haystack, expected) in cases {
             assert_eq!(
@@ -281,5 +299,27 @@ mod tests {
                 "missed: {haystack}"
             );
         }
+    }
+
+    /// Sigil-prefix forms `${!VAR}` (indirect) and `${#VAR}` (length)
+    /// are matched by the second shell pattern. The previous brace
+    /// regex required the identifier to come first inside `${...}` and
+    /// silently dropped these.
+    #[test]
+    fn shell_sigil_prefix_forms_indirect_and_length() {
+        let specs = language_specs();
+        let sh = &specs
+            .iter()
+            .find(|s| s.extensions.contains(&"sh"))
+            .unwrap()
+            .patterns;
+        assert_eq!(capture_name(&sh[1], "echo ${!VAR}").as_deref(), Some("VAR"));
+        assert_eq!(
+            capture_name(&sh[1], "echo ${#PATH}").as_deref(),
+            Some("PATH")
+        );
+        // The trailing `}` is required: `${#}` (length of positional
+        // params) must not produce an empty / stray match.
+        assert!(capture_name(&sh[1], "echo ${#}").is_none());
     }
 }
