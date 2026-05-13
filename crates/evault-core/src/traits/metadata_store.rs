@@ -115,7 +115,11 @@ pub trait MetadataStore: Send + Sync {
     /// failures.
     fn upsert_link(&self, link: &ProjectVar) -> Result<(), MetadataError>;
 
-    /// Delete a single linkage.
+    /// Delete a single linkage. Idempotent.
+    ///
+    /// Returns `Ok(true)` when a linkage was actually removed and `Ok(false)`
+    /// when the triple was already absent. The service layer uses this to
+    /// avoid emitting `Unlinked` audit entries for no-op calls.
     ///
     /// # Errors
     /// Returns [`MetadataError::Backend`] on storage failures.
@@ -124,7 +128,7 @@ pub trait MetadataStore: Send + Sync {
         project_id: ProjectId,
         var_id: VarId,
         profile: &Profile,
-    ) -> Result<(), MetadataError>;
+    ) -> Result<bool, MetadataError>;
 
     /// List every linkage attached to a project (across profiles).
     ///

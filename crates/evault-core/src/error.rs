@@ -200,6 +200,25 @@ pub enum CoreError {
     /// See [`ScannerError`].
     #[error(transparent)]
     Scanner(#[from] ScannerError),
+
+    /// A variable's metadata advertises one [`VarKind`] but the value was
+    /// found in the opposite storage tier (or could not be found in the
+    /// expected tier while existing in the other).
+    ///
+    /// This indicates corruption that bypassed the service layer's normal
+    /// routing rules. Higher layers should surface this loudly rather than
+    /// treating it as "value missing".
+    #[error(
+        "variable {id} has kind {expected:?} in metadata but the value is in the {found:?} tier"
+    )]
+    TierMismatch {
+        /// Identifier of the offending variable.
+        id: VarId,
+        /// The kind the metadata record claims.
+        expected: VarKind,
+        /// The tier the value was actually found in.
+        found: VarKind,
+    },
 }
 
 #[cfg(test)]

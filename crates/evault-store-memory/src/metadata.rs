@@ -174,12 +174,13 @@ impl MetadataStore for MemoryMetadataStore {
         project_id: ProjectId,
         var_id: VarId,
         profile: &Profile,
-    ) -> Result<(), MetadataError> {
+    ) -> Result<bool, MetadataError> {
         let mut state = self.write()?;
+        let before = state.links.len();
         state.links.retain(|l| {
             !(l.project_id == project_id && l.var_id == var_id && &l.profile == profile)
         });
-        Ok(())
+        Ok(state.links.len() != before)
     }
 
     fn list_links_for_project(
@@ -312,18 +313,35 @@ mod tests {
     }
 
     #[test]
-    fn delete_link_on_absent_triple_is_no_op() {
+    fn delete_link_returns_false_on_absent_triple() {
         let store = MemoryMetadataStore::new();
         let project = Project::new("p", PathBuf::from("."));
         store.upsert_project(&project).unwrap();
-        // Absent link: should be a silent no-op, not an error.
-        store
+        // Absent link: returns Ok(false), no error.
+        let removed = store
             .delete_link(project.id(), VarId::new_v4(), &Profile::default_profile())
             .unwrap();
+        assert!(!removed);
         assert!(store
             .list_links_for_project(project.id())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn delete_link_returns_true_when_a_row_is_removed() {
+        let store = MemoryMetadataStore::new();
+        let project = Project::new("p", PathBuf::from("."));
+        store.upsert_project(&project).unwrap();
+        let var = make_var("FOO");
+        store.upsert_var(&var).unwrap();
+        store
+            .upsert_link(&ProjectVar::new(project.id(), var.id()))
+            .unwrap();
+        let removed = store
+            .delete_link(project.id(), var.id(), &Profile::default_profile())
+            .unwrap();
+        assert!(removed);
     }
 
     #[test]

@@ -95,10 +95,21 @@ where
     /// the variable's id is generated through the injected
     /// [`IdGenerator`] and its timestamps through the injected [`Clock`].
     ///
+    /// # Atomicity (v1)
+    /// The implementation performs a best-effort compensation on
+    /// value-tier failure: if the metadata row was written and the value
+    /// write then fails, the metadata row is rolled back so the name is
+    /// not permanently reserved. A failure of the audit append after a
+    /// successful create is **not** compensated — the variable exists,
+    /// only the audit row is missing — and surfaces as
+    /// [`CoreError::Metadata`]. Full cross-tier atomic commit is on the
+    /// roadmap for the `SQLCipher` backend.
+    ///
     /// # Errors
     /// Returns [`CoreError::Metadata`] for validation, uniqueness, or
     /// storage failures; [`CoreError::Secret`] if writing to the secret
-    /// store fails.
+    /// store fails. Empty `value` is rejected with
+    /// [`MetadataError::Invalid`].
     pub fn create_var(
         &self,
         name: &str,
@@ -107,6 +118,9 @@ where
         value: SecretString,
     ) -> Result<VarId, CoreError> {
         Var::validate_name(name)?;
+        if value.expose_secret().is_empty() {
+            return Err(MetadataError::Invalid("value is empty".into()).into());
+        }
         if self.metadata.find_var_by_name(name)?.is_some() {
             return Err(MetadataError::DuplicateName(name.to_owned()).into());
         }
@@ -126,9 +140,21 @@ where
         );
         self.metadata.upsert_var(&var)?;
 
-        match kind {
-            VarKind::Plain => self.metadata.set_plain_value(id, value.expose_secret())?,
-            VarKind::Secret => self.secrets.put(id, value)?,
+        // Route the value to the correct tier. On failure, roll back the
+        // metadata row we just wrote so the name does not get permanently
+        // reserved on a half-created variable.
+        let value_write: Result<(), CoreError> = match kind {
+            VarKind::Plain => self
+                .metadata
+                .set_plain_value(id, value.expose_secret())
+                .map_err(Into::into),
+            VarKind::Secret => self.secrets.put(id, value).map_err(Into::into),
+        };
+        if let Err(e) = value_write {
+            // Best-effort rollback. The metadata.delete_var call also
+            // cascades plain values + links, which is harmless here.
+            let _ = self.metadata.delete_var(id);
+            return Err(e);
         }
 
         self.audit_var(id, AuditAction::Created)?;
@@ -141,37 +167,82 @@ where
     /// created with. The metadata record's `length` is refreshed but the
     /// `kind` is preserved.
     ///
+    /// The value-tier write happens **before** the metadata length update
+    /// so that a partial failure cannot leave metadata advertising a
+    /// length that no value in storage actually has.
+    ///
     /// # Errors
     /// Returns [`MetadataError::VarNotFound`] if the variable does not
-    /// exist, or any error from the underlying storage tier.
+    /// exist, [`MetadataError::Invalid`] if the value is empty, or any
+    /// error from the underlying storage tier.
     pub fn update_value(&self, id: VarId, value: SecretString) -> Result<(), CoreError> {
+        if value.expose_secret().is_empty() {
+            return Err(MetadataError::Invalid("value is empty".into()).into());
+        }
         let Some(mut var) = self.metadata.get_var(id)? else {
             return Err(MetadataError::VarNotFound(id).into());
         };
         let length = value.expose_secret().len();
-        var.set_length(length);
-        self.metadata.upsert_var(&var)?;
 
+        // Write the value FIRST. If this fails, no metadata change has
+        // landed and the stored state still describes the prior value.
         match var.kind() {
             VarKind::Plain => self.metadata.set_plain_value(id, value.expose_secret())?,
             VarKind::Secret => self.secrets.put(id, value)?,
         }
+        // Now refresh the length and persist.
+        var.set_length(length);
+        self.metadata.upsert_var(&var)?;
         self.audit_var(id, AuditAction::Updated)?;
         Ok(())
     }
 
     /// Retrieve the value of a variable regardless of storage tier.
     ///
+    /// If the metadata record claims one [`VarKind`] but the value is
+    /// found in the opposite tier, this method returns
+    /// [`CoreError::TierMismatch`] rather than silently treating the
+    /// situation as "value missing". This surfaces corruption that
+    /// bypassed the service layer's normal routing.
+    ///
     /// # Errors
     /// Returns any propagated storage error. Returns `Ok(None)` if the
-    /// variable does not exist.
+    /// variable does not exist or has no value in the expected tier and
+    /// none in the opposite tier either.
     pub fn get_value(&self, id: VarId) -> Result<Option<SecretString>, CoreError> {
         let Some(var) = self.metadata.get_var(id)? else {
             return Ok(None);
         };
-        match var.kind() {
-            VarKind::Plain => Ok(self.metadata.get_plain_value(id)?.map(SecretString::from)),
-            VarKind::Secret => Ok(self.secrets.get(id)?),
+        let kind = var.kind();
+        match kind {
+            VarKind::Plain => {
+                if let Some(plain) = self.metadata.get_plain_value(id)? {
+                    return Ok(Some(SecretString::from(plain)));
+                }
+                // Plain-tier miss: probe the opposite tier to surface
+                // corruption before returning the indistinguishable None.
+                if self.secrets.get(id)?.is_some() {
+                    return Err(CoreError::TierMismatch {
+                        id,
+                        expected: VarKind::Plain,
+                        found: VarKind::Secret,
+                    });
+                }
+                Ok(None)
+            }
+            VarKind::Secret => {
+                if let Some(value) = self.secrets.get(id)? {
+                    return Ok(Some(value));
+                }
+                if self.metadata.get_plain_value(id)?.is_some() {
+                    return Err(CoreError::TierMismatch {
+                        id,
+                        expected: VarKind::Secret,
+                        found: VarKind::Plain,
+                    });
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -202,17 +273,27 @@ where
     /// Delete a variable and every value stored for it across all tiers.
     /// Idempotent: deleting an absent variable is a successful no-op.
     ///
+    /// Order of operations: metadata first (cascading plain values + links),
+    /// then a defensive `secrets.delete` for *both* kinds. The metadata-first
+    /// order guarantees that a transient secret-tier failure cannot leave a
+    /// "zombie" variable that the user can see but never read; the
+    /// defensive secret delete on `Plain` kind closes a corruption-recovery
+    /// path. A secret-tier failure after metadata has been deleted is
+    /// returned to the caller but the variable is, from any reader's
+    /// perspective, gone.
+    ///
     /// # Errors
     /// Propagates storage failures.
     pub fn delete_var(&self, id: VarId) -> Result<(), CoreError> {
-        let Some(var) = self.metadata.get_var(id)? else {
+        if self.metadata.get_var(id)?.is_none() {
             return Ok(());
-        };
-        if var.kind() == VarKind::Secret {
-            self.secrets.delete(id)?;
         }
-        // metadata.delete_var also cascades plain_values + links.
+        // Metadata first: cascades plain values + links atomically (per
+        // backend contract) and removes the variable from every read path.
         self.metadata.delete_var(id)?;
+        // Defensive: try the secret tier even when the kind was Plain. The
+        // call is idempotent per the trait contract.
+        self.secrets.delete(id)?;
         self.audit_var(id, AuditAction::Deleted)?;
         Ok(())
     }
@@ -297,6 +378,11 @@ where
 
     /// Remove a linkage. Idempotent: removing an absent link is `Ok(())`.
     ///
+    /// Emits an [`AuditAction::Unlinked`] entry **only when a linkage was
+    /// actually removed**. A call on an absent triple is a successful
+    /// no-op and is not audited (avoids audit-log pollution that would
+    /// degrade forensic value).
+    ///
     /// # Errors
     /// Propagates storage failures.
     pub fn unlink_var(
@@ -305,8 +391,10 @@ where
         var_id: VarId,
         profile: &Profile,
     ) -> Result<(), CoreError> {
-        self.metadata.delete_link(project_id, var_id, profile)?;
-        self.audit_project(project_id, Some(var_id), AuditAction::Unlinked)?;
+        let removed = self.metadata.delete_link(project_id, var_id, profile)?;
+        if removed {
+            self.audit_project(project_id, Some(var_id), AuditAction::Unlinked)?;
+        }
         Ok(())
     }
 

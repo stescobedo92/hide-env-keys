@@ -12,7 +12,7 @@ use evault_core::model::{
     AuditAction, AuditEntry, Group, Profile, ProjectId, Var, VarFilter, VarId, VarKind,
 };
 use evault_core::service::RegistryService;
-use evault_core::traits::{SystemClock, UuidV4IdGenerator};
+use evault_core::traits::{MetadataStore, SecretStore, SystemClock, UuidV4IdGenerator};
 use evault_store_memory::{MemoryAuditSink, MemoryMetadataStore, MemorySecretStore};
 
 type Service = RegistryService<
@@ -273,5 +273,139 @@ fn link_var_to_missing_project_or_var_returns_typed_error() {
     assert!(matches!(
         err,
         CoreError::Metadata(MetadataError::ProjectNotFound(_))
+    ));
+}
+
+#[test]
+fn create_var_rejects_empty_value() {
+    let service = build_service();
+    let err = service
+        .create_var("API_KEY", Group::User, VarKind::Secret, secret(""))
+        .expect_err("empty");
+    assert!(matches!(
+        err,
+        CoreError::Metadata(MetadataError::Invalid(_))
+    ));
+    // Nothing was written: list is empty, audit empty.
+    assert!(service.list_vars(&VarFilter::new()).unwrap().is_empty());
+    assert!(service.recent_audit(10).unwrap().is_empty());
+}
+
+#[test]
+fn create_after_delete_reuses_name_successfully() {
+    let service = build_service();
+    let id1 = service
+        .create_var("PORT", Group::Project, VarKind::Plain, secret("3000"))
+        .unwrap();
+    service.delete_var(id1).unwrap();
+    // Name is now free; create succeeds with a different value and id.
+    let id2 = service
+        .create_var("PORT", Group::Project, VarKind::Plain, secret("4000"))
+        .unwrap();
+    assert_ne!(id1, id2);
+    let value = service.get_value(id2).unwrap().expect("present");
+    assert_eq!(value.expose_secret(), "4000");
+}
+
+#[test]
+fn update_value_on_plain_var_writes_to_plain_tier() {
+    let service = build_service();
+    let id = service
+        .create_var("LOG_LEVEL", Group::Project, VarKind::Plain, secret("info"))
+        .unwrap();
+    service.update_value(id, secret("debug")).unwrap();
+    let value = service.get_value(id).unwrap().expect("present");
+    assert_eq!(value.expose_secret(), "debug");
+    let var = service.get_var(id).unwrap().expect("present");
+    assert_eq!(var.kind(), VarKind::Plain);
+    assert_eq!(var.length(), "debug".len());
+}
+
+#[test]
+fn delete_plain_var_clears_plain_tier_and_audits() {
+    let service = build_service();
+    let id = service
+        .create_var("TMP", Group::Project, VarKind::Plain, secret("v"))
+        .unwrap();
+    service.delete_var(id).unwrap();
+    assert!(service.get_var(id).unwrap().is_none());
+    assert!(service.get_value(id).unwrap().is_none());
+
+    let entries = service.recent_audit(10).unwrap();
+    let actions: Vec<&AuditAction> = entries.iter().map(AuditEntry::action).collect();
+    assert_eq!(actions, vec![&AuditAction::Deleted, &AuditAction::Created]);
+}
+
+#[test]
+fn link_var_is_idempotent_on_same_triple() {
+    let service = build_service();
+    let var_id = service
+        .create_var("DB_URL", Group::Project, VarKind::Secret, secret("u"))
+        .unwrap();
+    let project_id = service.create_project("app", PathBuf::from(".")).unwrap();
+    service
+        .link_var(project_id, var_id, Profile::default_profile(), None)
+        .unwrap();
+    service
+        .link_var(
+            project_id,
+            var_id,
+            Profile::default_profile(),
+            Some("DB_LOCAL".into()),
+        )
+        .unwrap();
+    let links = service.links_for_project(project_id).unwrap();
+    // Replaced, not duplicated.
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].alias.as_deref(), Some("DB_LOCAL"));
+}
+
+#[test]
+fn unlink_var_on_absent_triple_does_not_emit_audit() {
+    let service = build_service();
+    let project_id = service.create_project("app", PathBuf::from(".")).unwrap();
+    // Absent triple: succeeds but emits no Unlinked audit entry.
+    service
+        .unlink_var(project_id, VarId::new_v4(), &Profile::default_profile())
+        .unwrap();
+    let entries = service.recent_audit(10).unwrap();
+    let actions: Vec<&AuditAction> = entries.iter().map(AuditEntry::action).collect();
+    // Only the project Created entry; no Unlinked.
+    assert_eq!(actions, vec![&AuditAction::Created]);
+}
+
+#[test]
+fn get_value_returns_tier_mismatch_on_corruption() {
+    // Hand-built corrupted state: var claims Plain in metadata but the value
+    // sits in the secret tier. The service must surface this loudly rather
+    // than treating it as "value missing".
+    let metadata = MemoryMetadataStore::new();
+    let secrets = MemorySecretStore::new();
+    let audit = MemoryAuditSink::new();
+    let id = VarId::new_v4();
+    let now = time::OffsetDateTime::now_utc();
+    let var = Var::from_trusted_parts(
+        id,
+        "GHOST".to_owned(),
+        Group::Project,
+        VarKind::Plain,
+        Vec::new(),
+        5,
+        now,
+        now,
+    );
+    metadata.upsert_var(&var).unwrap();
+    // Misroute: secret tier holds the value, plain tier is empty.
+    secrets.put(id, secret("ghost")).unwrap();
+
+    let service = RegistryService::with_defaults(metadata, secrets, audit);
+    let err = service.get_value(id).expect_err("tier mismatch");
+    assert!(matches!(
+        err,
+        CoreError::TierMismatch {
+            id: bad_id,
+            expected: VarKind::Plain,
+            found: VarKind::Secret,
+        } if bad_id == id
     ));
 }
