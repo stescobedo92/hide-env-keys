@@ -103,6 +103,10 @@ version = "0.1.0"
 [[package]]
 name = "evault-store-memory"
 version = "0.1.0"
+dependencies = [
+ "evault-core",
+ "time",
+]
 
 [[package]]
 name = "evault-store-sqlcipher"
