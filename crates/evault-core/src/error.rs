@@ -93,6 +93,15 @@ pub enum ManifestError {
     #[error("manifest path does not exist: {0}")]
     NotFound(PathBuf),
 
+    /// An I/O error occurred while reading or writing the manifest file
+    /// (permission denied, disk failure, path is a directory, etc.).
+    ///
+    /// **Backend implementors MUST NOT** include the OS error message
+    /// verbatim (which can echo paths or quoting). Carry only the
+    /// [`std::io::ErrorKind`] discriminant or a stable category label.
+    #[error("manifest io error: {0}")]
+    Io(String),
+
     /// The manifest contents could not be parsed.
     ///
     /// **Backend implementors MUST NOT** include rendered manifest content,

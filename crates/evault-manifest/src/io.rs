@@ -33,22 +33,26 @@ impl ManifestIo for FileManifestIo {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(ManifestError::NotFound(path.to_path_buf()));
             }
-            // Carry only the IO error kind label; never the path or the
-            // error's own message (which on some platforms can echo the
-            // path).
+            // I/O failure (permission denied, disk error, path is a
+            // directory, etc). Route through the dedicated `Io` variant so
+            // the user can distinguish a filesystem problem from malformed
+            // TOML. Carry only the ErrorKind label; never the OS message.
             Err(e) => {
-                return Err(ManifestError::Parse(format!("read failed: {:?}", e.kind())));
+                return Err(ManifestError::Io(format!("read: {:?}", e.kind())));
             }
         };
         let file: ManifestFile = toml::from_str(&text).map_err(|e| {
-            // `toml::de::Error` Display can include the offending line/column
-            // text. The line/column is operational signal worth preserving;
-            // the surrounding text is not. We carry the parser's own message
-            // here because it's bounded by the structural error (token,
-            // expected/found) and does not embed inline-binding values
-            // unless the user genuinely put a malformed string at that
-            // exact position — at which point the user supplied it.
-            ManifestError::Parse(format!("toml: {e}"))
+            // `toml::de::Error` Display renders a snippet of the source
+            // line with a caret. That snippet can include inline binding
+            // values, which violates the `ManifestError::Parse` doc
+            // contract ("Quote only the structural error … never the
+            // surrounding source text"). Extract only the structural
+            // message + line/column so no source text reaches the error.
+            let location = e
+                .span()
+                .map(|range| format!(" at bytes {}..{}", range.start, range.end))
+                .unwrap_or_default();
+            ManifestError::Parse(format!("toml: {}{location}", e.message()))
         })?;
         file.into_snapshot()
     }
@@ -71,11 +75,16 @@ impl ManifestIo for FileManifestIo {
         // directory so the rename stays on the same filesystem (Windows
         // requires same-volume renames for atomicity).
         let tmp = parent.join(make_tmp_name(path)?);
-        fs::write(&tmp, body.as_bytes())
-            .map_err(|e| ManifestError::Write(format!("write tmp: {:?}", e.kind())))?;
+        if let Err(e) = fs::write(&tmp, body.as_bytes()) {
+            // A failed `fs::write` may have created a truncated tempfile.
+            // Best-effort cleanup so we don't accumulate orphan files in
+            // the manifest's parent directory; ignore the secondary error
+            // so the user sees the original failure.
+            let _ = fs::remove_file(&tmp);
+            return Err(ManifestError::Write(format!("write tmp: {:?}", e.kind())));
+        }
         if let Err(e) = fs::rename(&tmp, path) {
-            // Best-effort cleanup; ignore the secondary error so the user
-            // sees the original failure.
+            // Same best-effort cleanup as above.
             let _ = fs::remove_file(&tmp);
             return Err(ManifestError::Write(format!(
                 "rename failed: {:?}",

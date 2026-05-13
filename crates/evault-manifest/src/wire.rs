@@ -15,7 +15,11 @@ use evault_core::model::{
 };
 
 /// Top-level TOML structure.
+///
+/// `deny_unknown_fields` makes the parser reject typos and future-schema
+/// keys we don't recognise rather than silently dropping them.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManifestFile {
     project_id: String,
     name: String,
@@ -33,7 +37,13 @@ pub enum BindingDef {
     Registry(RegistryRef),
 }
 
+/// `{ ref = "uuid" }` table referencing a registry variable.
+///
+/// `deny_unknown_fields` rejects future-schema keys (e.g. `alias`,
+/// `optional`) so typos surface loudly rather than silently round-trip
+/// into oblivion.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RegistryRef {
     #[serde(rename = "ref")]
     var_id: String,
