@@ -15,3 +15,9 @@ description = "Regex-based source-code scanner for environment-variable usage."
 workspace = true
 
 [dependencies]
+evault-core = { path = "../evault-core", version = "0.1" }
+regex = "1.12"
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1100,6 +1100,12 @@ dependencies = [
 [[package]]
 name = "evault-scanner-regex"
 version = "0.1.0"
+dependencies = [
+ "evault-core",
+ "regex",
+ "tempfile",
+ "walkdir",
+]
 
 [[package]]
 name = "evault-store-keyring"
