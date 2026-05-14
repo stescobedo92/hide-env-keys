@@ -164,10 +164,20 @@ where
                         panic::catch_unwind(AssertUnwindSafe(|| backend.create(draft)));
                     match create_result {
                         Err(_) => {
-                            app.set_error_toast("create crashed: backend panicked");
+                            app.show_error_modal(
+                                "create failed",
+                                "backend panicked while creating the variable",
+                                Some(
+                                    "this is a bug in the backend; restart and \
+                                     report the issue if it persists."
+                                        .into(),
+                                ),
+                            );
                         }
                         Ok(Err(e)) => {
-                            app.set_error_toast(format!("create failed: {e}"));
+                            let msg = e.to_string();
+                            let hint = create_hint(&msg);
+                            app.show_error_modal("create failed", msg, hint);
                         }
                         Ok(Ok(_id)) => {
                             if let Err(e) = app.refresh(backend) {
@@ -185,10 +195,20 @@ where
                         panic::catch_unwind(AssertUnwindSafe(|| backend.update_value(id, value)));
                     match update_result {
                         Err(_) => {
-                            app.set_error_toast("update crashed: backend panicked");
+                            app.show_error_modal(
+                                "update failed",
+                                "backend panicked while updating the value",
+                                Some(
+                                    "this is a bug in the backend; restart \
+                                     and report the issue if it persists."
+                                        .into(),
+                                ),
+                            );
                         }
                         Ok(Err(e)) => {
-                            app.set_error_toast(format!("update failed: {e}"));
+                            let msg = e.to_string();
+                            let hint = update_hint(&msg);
+                            app.show_error_modal("update failed", msg, hint);
                         }
                         Ok(Ok(())) => {
                             if let Err(e) = app.refresh(backend) {
@@ -219,10 +239,20 @@ where
                     }));
                     match result {
                         Err(_) => {
-                            app.set_error_toast("link crashed: backend panicked");
+                            app.show_error_modal(
+                                "link failed",
+                                "backend panicked while linking the variable",
+                                Some(
+                                    "this is a bug in the backend; restart \
+                                     and report the issue if it persists."
+                                        .into(),
+                                ),
+                            );
                         }
                         Ok(Err(e)) => {
-                            app.set_error_toast(format!("link failed: {e}"));
+                            let msg = e.to_string();
+                            let hint = link_hint(&msg);
+                            app.show_error_modal("link failed", msg, hint);
                         }
                         Ok(Ok(())) => {
                             let suffix = if materialize { " + .env" } else { "" };
@@ -282,10 +312,19 @@ where
                         panic::catch_unwind(AssertUnwindSafe(|| backend.delete(id)));
                     match delete_result {
                         Err(_) => {
-                            app.set_error_toast("delete crashed: backend panicked");
+                            app.show_error_modal(
+                                "delete failed",
+                                "backend panicked while deleting the variable",
+                                Some(
+                                    "this is a bug in the backend; restart \
+                                     and report the issue if it persists."
+                                        .into(),
+                                ),
+                            );
                         }
                         Ok(Err(e)) => {
-                            app.set_error_toast(format!("delete failed: {e}"));
+                            let msg = e.to_string();
+                            app.show_error_modal("delete failed", msg, None);
                         }
                         Ok(Ok(())) => {
                             if matches!(app.current_view(), View::Detail) {
@@ -319,4 +358,90 @@ where
     }
 
     Ok(())
+}
+
+/// Contextual hint for a failed `create` action. Inspects the
+/// backend's error message and returns the most useful explanation
+/// we can offer. Returns `None` for messages that already explain
+/// themselves.
+fn create_hint(msg: &str) -> Option<String> {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("invalid character") || lower.contains("invalid name") {
+        return Some(
+            "Names must match `^[A-Za-z_][A-Za-z0-9_]{0,63}$`: start with \
+             a letter or underscore, then only letters, digits, or \
+             underscores. Max 64 characters. Dashes, spaces, and \
+             accents are NOT allowed."
+                .to_owned(),
+        );
+    }
+    if lower.contains("duplicate") || lower.contains("already exists") {
+        return Some(
+            "A variable with that name already exists. Pick a different \
+             name, or press `e` on the existing row to update its value."
+                .to_owned(),
+        );
+    }
+    if lower.contains("empty") {
+        return Some("The value field cannot be empty.".to_owned());
+    }
+    if lower.contains("too long") {
+        return Some(
+            "Names cap at 64 characters; values typically cap around \
+             1 MB depending on the storage backend."
+                .to_owned(),
+        );
+    }
+    None
+}
+
+/// Contextual hint for a failed `update_value` action.
+fn update_hint(msg: &str) -> Option<String> {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("empty") {
+        return Some("The new value cannot be empty.".to_owned());
+    }
+    if lower.contains("not found") || lower.contains("no variable") {
+        return Some(
+            "The variable was deleted by another process before the \
+             update could complete. Press `r` to refresh the dashboard."
+                .to_owned(),
+        );
+    }
+    None
+}
+
+/// Contextual hint for a failed `link_to_project` action.
+fn link_hint(msg: &str) -> Option<String> {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("create project dir") || lower.contains("permission") {
+        return Some(
+            "Could not create the project directory. Check that the \
+             path is writable and try again with a different path."
+                .to_owned(),
+        );
+    }
+    if lower.contains("canonicalise") || lower.contains("canonicalize") {
+        return Some(
+            "Could not resolve the project path to an absolute one. \
+             Check that the path syntax is valid for your platform."
+                .to_owned(),
+        );
+    }
+    if lower.contains("manifest") {
+        return Some(
+            "Could not read or write the project's `evault.toml`. \
+             Check filesystem permissions on the project directory."
+                .to_owned(),
+        );
+    }
+    if lower.contains("materialize") {
+        return Some(
+            "Linking succeeded but writing `.env` failed. The binding \
+             is recorded; try `evault gen --project PATH` from the \
+             shell to retry materialization."
+                .to_owned(),
+        );
+    }
+    None
 }

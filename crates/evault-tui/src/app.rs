@@ -100,6 +100,9 @@ pub struct AppState {
     /// Read-only view-value modal currently focused. Shows a
     /// variable's decrypted value; closed by Esc.
     view_value: Option<ViewValueModal>,
+    /// Error modal currently focused. Surfaces an action failure
+    /// with a contextual hint. Dismissed by Esc / Enter.
+    error_modal: Option<ErrorModal>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
@@ -255,6 +258,24 @@ pub(crate) enum LinkField {
     Materialize,
 }
 
+/// Error modal — focused popup that surfaces an action failure
+/// (failed create / edit / delete / link) with an explanatory hint.
+///
+/// Replaces a sticky error toast for cases where the user needs to
+/// actively acknowledge the failure (the toast is too easy to miss
+/// when an action they just initiated fails).
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) struct ErrorModal {
+    /// Short title, e.g. `"create failed"` or `"link failed"`.
+    pub(crate) title: String,
+    /// The raw error message from the backend.
+    pub(crate) message: String,
+    /// Optional contextual hint explaining the failure and how to
+    /// fix it (e.g. naming rules when the create rejected the name).
+    pub(crate) hint: Option<String>,
+}
+
 /// View-value modal — popup showing a variable's decrypted value
 /// after the user pressed `v`. The runtime fetches the value and
 /// calls [`AppState::show_value_modal`] which inserts this struct.
@@ -325,6 +346,7 @@ impl AppState {
             form: None,
             link_form: None,
             view_value: None,
+            error_modal: None,
         }
     }
 
@@ -393,6 +415,11 @@ impl AppState {
     pub fn dispatch_key(&mut self, key: KeyEvent) -> DispatchOutcome {
         if key.kind != KeyEventKind::Press {
             return DispatchOutcome::Continue;
+        }
+        // Error modal: takes priority over everything else so the
+        // user has to acknowledge an action failure before continuing.
+        if self.error_modal.is_some() {
+            return self.dispatch_error_modal_key(key);
         }
         // Modal confirm steals focus from everything else: when the
         // user is being asked "are you sure?", any other action would
@@ -681,6 +708,51 @@ impl AppState {
             value,
             show: false,
         });
+    }
+
+    /// Raise a focused error modal so the user has to acknowledge
+    /// an action failure before continuing. Preferred over
+    /// [`Self::set_error_toast`] when the user just initiated the
+    /// failing action (create / edit / delete / link) — the toast
+    /// is too easy to miss.
+    pub fn show_error_modal(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        hint: Option<String>,
+    ) {
+        self.error_modal = Some(ErrorModal {
+            title: title.into(),
+            message: message.into(),
+            hint,
+        });
+    }
+
+    /// Whether the error modal is currently focused.
+    #[must_use]
+    pub const fn is_error_modal_visible(&self) -> bool {
+        self.error_modal.is_some()
+    }
+
+    /// Read-only access to the focused error modal (for the views layer).
+    pub(crate) const fn current_error_modal(&self) -> Option<&ErrorModal> {
+        self.error_modal.as_ref()
+    }
+
+    /// Handle a key while the error modal is focused. Only `Esc`,
+    /// `Enter`, and `Ctrl+C` are recognised; the modal swallows
+    /// everything else so the user can't accidentally trigger a new
+    /// action while still reading the error.
+    fn dispatch_error_modal_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')) {
+            self.error_modal = None;
+        }
+        DispatchOutcome::Continue
     }
 
     /// Whether the link form modal is currently focused.

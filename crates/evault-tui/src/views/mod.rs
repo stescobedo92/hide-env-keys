@@ -3,6 +3,7 @@
 pub mod dashboard;
 pub mod detail;
 pub mod editor;
+pub mod error_modal;
 pub mod help;
 pub mod link_form;
 pub mod view_value;
@@ -89,11 +90,17 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
         view_value::render(frame, centered(area, 70, 40), app, theme);
     }
 
-    // Confirm modal drawn last so it sits on top of every other
-    // layer (dashboard / detail / filter input / toast / help /
-    // editor / link / view-value).
+    // Confirm modal drawn ABOVE the regular stack so a delete
+    // confirmation always sits on top.
     if let Some(req) = app.current_confirm() {
         modal::render(frame, centered(area, 50, 25), req, theme);
+    }
+
+    // Error modal sits at the TOP of the layer stack — when an
+    // action fails the user must acknowledge before anything else
+    // can be interacted with.
+    if app.is_error_modal_visible() {
+        error_modal::render(frame, centered(area, 60, 35), app, theme);
     }
 }
 
