@@ -24,20 +24,16 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
 
     // Layout, top-down:
     //   - body (dashboard / detail)             — flexible (`Min(1)`)
-    //   - fuzzy input (1 row, only when active)
     //   - toast (1 row, only when active)
     //   - keybindings hint bar (`HEIGHT` rows, always)
     //   - status bar (1 row, always)
     //
-    // We compose the constraint slice dynamically so optional rows
-    // do not steal vertical space when they are not on-screen.
-    let show_filter = app.is_filter_active();
+    // Fuzzy filter is NOT in this layout — it pops up as a centered
+    // modal (see further down) so it doesn't compete with the
+    // keybindings strip for bottom screen space.
     let show_toast = app.toast_text().is_some();
 
     let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
-    if show_filter {
-        constraints.push(Constraint::Length(1));
-    }
     if show_toast {
         constraints.push(Constraint::Length(1));
     }
@@ -49,9 +45,6 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let Some(&status) = regions.last() else {
         return;
     };
-    // Keybindings strip sits in the second-to-last slot. `split`
-    // returns at least 2 entries (body + status) so the
-    // `len() - 2` access is safe, but we use `get` for defence.
     let keybindings_idx = regions.len().saturating_sub(2);
     let Some(&keybindings_rect) = regions.get(keybindings_idx) else {
         return;
@@ -64,18 +57,17 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     keybindings::render(frame, keybindings_rect, app, theme);
     statusbar::render(frame, status, app, theme);
 
-    // Optional rows between body and keybindings strip.
-    let mut next = 1_usize;
-    if show_filter {
-        if let Some(&r) = regions.get(next) {
-            fuzzy_input::render(frame, r, app, theme);
-        }
-        next += 1;
-    }
     if show_toast {
-        if let Some(&r) = regions.get(next) {
+        if let Some(&r) = regions.get(1) {
             toast::render(frame, r, app, theme);
         }
+    }
+
+    // Fuzzy filter modal — only while the input is being typed.
+    // Once committed (Enter), the modal closes and the filter stays
+    // applied (the dashboard title shows `vars (matched/total)`).
+    if app.is_filter_input_active() {
+        fuzzy_input::render(frame, centered(area, 50, 25), app, theme);
     }
 
     if app.help_visible() {
