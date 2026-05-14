@@ -1,21 +1,22 @@
 name: Publish npm
 
 # Triggered after the Release workflow publishes the GitHub Release
-# containing the per-platform binaries. We MUST wait for those
-# binaries to exist before publishing, because the npm postinstall
-# script downloads them from the release at install time. A user
-# running `npm install evault` against a version whose Release is
-# half-finished would fail with a 404.
+# containing the per-platform binaries. The npm postinstall script
+# downloads those binaries from the matching GitHub Release at
+# `npm install` time, so the Release MUST exist before this workflow
+# publishes — a user running `npm install evault` against a half-
+# finished release would 404.
 #
 # Two trigger modes:
 #
-# 1. Automatic: a tag push (matching `v*`) that also fires the Release
-#    workflow. This job runs `needs: wait-for-release` so it only
-#    proceeds once the artifact upload step of the release pipeline
-#    has finished.
-# 2. Manual: `workflow_dispatch` with a version input — useful for
-#    republishing if the npm side fails after the GitHub Release is
-#    already up.
+# 1. Automatic: workflow_run on Release completion. The tag name is
+#    read from the workflow_run event so the published npm version
+#    matches the released binaries.
+# 2. Manual: workflow_dispatch with a `version` input (and an
+#    optional `source_ref` override). Useful for republishing if
+#    the npm side fails after the GitHub Release is already up, or
+#    if the canonical tag was cut before `npm/` was added to the
+#    repository and you need to publish the wrapper from master.
 
 on:
   workflow_run:
@@ -26,13 +27,25 @@ on:
       version:
         description: 'Version to publish (without the leading "v", e.g. 0.1.0)'
         required: true
+      source_ref:
+        description: |
+          Ref to check out for the npm/ wrapper source. Defaults to the
+          tag matching `version`. Override with a branch (e.g. `master`)
+          when the tag was cut before the npm/ directory existed.
+        required: false
+        default: ""
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   publish:
     name: Publish to npm
+    # `contents:read` to clone, `id-token:write` so `npm publish
+    # --provenance` can mint an OIDC token that npm verifies and
+    # attaches to the package as a sigstore attestation.
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     # On `workflow_run` only proceed if the Release workflow succeeded;
     # skip silently otherwise so a failed release does not also produce
@@ -41,31 +54,72 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     steps:
-      - name: Resolve version
+      - name: Resolve version and source ref
         id: resolve
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             version="${{ github.event.inputs.version }}"
+            source_ref="${{ github.event.inputs.source_ref }}"
           else
             # The Release workflow runs on a tag push; the tag name is
             # in `head_branch` of the workflow_run event.
             tag="${{ github.event.workflow_run.head_branch }}"
             version="${tag#v}"
+            source_ref=""
           fi
           if [[ -z "$version" ]]; then
             echo "::error::could not resolve version"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Publishing evault@$version to npm"
+          # Default `source_ref` to the tag matching the version.
+          if [[ -z "$source_ref" ]]; then
+            source_ref="v${version}"
+          fi
+          echo "version=$version"           >> "$GITHUB_OUTPUT"
+          echo "source_ref=$source_ref"     >> "$GITHUB_OUTPUT"
+          echo "Publishing evault@$version to npm from ref $source_ref"
 
       - uses: actions/checkout@v4
         with:
-          # Check out the tag that the release was cut from, so the
-          # npm/ tree matches the Cargo workspace version.
-          ref: v${{ steps.resolve.outputs.version }}
+          ref: ${{ steps.resolve.outputs.source_ref }}
+
+      - name: Verify npm/ exists at checked-out ref
+        # Defensive guard: if the ref doesn't include the npm wrapper
+        # (e.g. the tag predates its addition), fail HERE with a clear
+        # actionable message instead of crashing later inside a
+        # `working-directory: npm` step with the cryptic
+        # "No such file or directory" from bash.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -d npm ]]; then
+            echo "::error title=npm/ not found at $(git rev-parse HEAD)::"
+            echo ""
+            echo "The checked-out ref '${{ steps.resolve.outputs.source_ref }}'"
+            echo "does not contain an 'npm/' directory. This usually means"
+            echo "the tag was cut BEFORE the npm wrapper was added to the"
+            echo "repository."
+            echo ""
+            echo "Two ways to fix this:"
+            echo ""
+            echo "  1. Move the tag to a commit that includes npm/:"
+            echo "       git tag -d v${{ steps.resolve.outputs.version }}"
+            echo "       git push origin :refs/tags/v${{ steps.resolve.outputs.version }}"
+            echo "       git tag -a v${{ steps.resolve.outputs.version }} -m '...'"
+            echo "       git push origin v${{ steps.resolve.outputs.version }}"
+            echo "     The Release workflow will rerun and trigger this one"
+            echo "     again automatically."
+            echo ""
+            echo "  2. Manually dispatch THIS workflow with source_ref=master"
+            echo "     (Actions → Publish npm → Run workflow → set source_ref)."
+            echo "     The npm publish will use the latest npm/ wrapper code"
+            echo "     while still labelling the package with the tag's"
+            echo "     version."
+            exit 1
+          fi
+          echo "OK: npm/ exists at the checked-out ref."
 
       - uses: actions/setup-node@v4
         with:
@@ -79,18 +133,19 @@ jobs:
           set -euo pipefail
           # The release tag is the source of truth. Rewrite
           # `npm/package.json` so the `version` field matches the tag.
-          # Uses `npm version` with --no-git-tag-version so it does
-          # NOT try to create a tag in the workflow's read-only
-          # checkout.
-          npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
+          # `--no-git-tag-version` so npm does NOT try to create a tag
+          # in the workflow's read-only checkout. `--allow-same-version`
+          # so re-running against an already-bumped checkout is a no-op
+          # rather than an error.
+          npm version "${{ steps.resolve.outputs.version }}" \
+            --no-git-tag-version --allow-same-version
 
       - name: Sanity check the package contents
         working-directory: npm
-        run: |
-          npm pack --dry-run
+        run: npm pack --dry-run
+        env:
           # Skip the postinstall during the pack/publish step itself;
           # it would try to download binaries we may have just built.
-        env:
           EVAULT_SKIP_POSTINSTALL: "1"
 
       - name: Publish to npm
@@ -98,5 +153,4 @@ jobs:
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Same skip — the publish itself must not run the postinstall.
           EVAULT_SKIP_POSTINSTALL: "1"
