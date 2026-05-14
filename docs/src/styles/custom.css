@@ -1,0 +1,20 @@
+/* Minimal evault palette overrides for Starlight.
+ * Picks accent + bg tones that match the TUI theme so the docs feel
+ * continuous with the app. Edit hue values to retune. */
+
+:root {
+  --sl-color-accent-low: #1f2a44;
+  --sl-color-accent: #4a8cff;
+  --sl-color-accent-high: #bcd4ff;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #0e1a2e;
+  --sl-color-accent: #6aa6ff;
+  --sl-color-accent-high: #d6e6ff;
+}
+
+/* Tighten code-block line height for terminal-style snippets. */
+.sl-markdown-content pre code {
+  line-height: 1.5;
+}

@@ -1,0 +1,107 @@
+name: Deploy docs to GitHub Pages
+
+# Three trigger modes:
+# 1. Push to master that touches `docs/**` — keep the published site
+#    in sync with the source of truth automatically.
+# 2. Release published — rebuild on tag so the site reflects the
+#    just-released version's docs (in case the tag commit changed
+#    them after the last `master` push).
+# 3. Manual `workflow_dispatch` — for republishing without a code
+#    change (e.g. after fixing a misconfigured Pages source in repo
+#    settings).
+on:
+  push:
+    branches: [master]
+    paths:
+      - "docs/**"
+      - ".github/workflows/deploy-docs.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      docs_ref:
+        description: "Tag, branch, or commit SHA to publish (defaults to master)"
+        required: false
+        default: "master"
+
+# Cancel in-progress runs of the same group when a newer one lands.
+# Keyed on the ref so a docs push during a manual dispatch does not
+# disrupt the dispatch's checkout.
+concurrency:
+  group: pages-${{ inputs.docs_ref || github.ref }}
+  cancel-in-progress: true
+
+# Repository-default permissions are intentionally empty. Each job
+# below opts in to the minimum it needs (contents:read for build,
+# pages+id-token for deploy). Least-privilege beats workflow-wide grants.
+permissions: {}
+
+jobs:
+  build:
+    name: Build site
+    # `contents:read` is enough to clone the repo. We do not write
+    # anything back from the build job.
+    permissions:
+      contents: read
+    # Skip on forks so a fork's automated push does not try to deploy
+    # to the upstream's Pages and 403. Replace `stescobedo/hide-env-keys`
+    # if you fork this workflow.
+    if: github.repository == 'stescobedo/hide-env-keys'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # On `workflow_dispatch`, honour the input; otherwise default
+          # (the ref that triggered the run).
+          ref: ${{ inputs.docs_ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install dependencies
+        # First-time run will not have a committed lockfile; subsequent
+        # runs will. `npm ci` fails fast if the lockfile is missing or
+        # out of sync; fall back to `npm install` so the first deploy
+        # works without manual lockfile pre-generation.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Build site
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: docs/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    # `pages:write` lets the deploy action publish; `id-token:write`
+    # lets it authenticate with sigstore for the OIDC token. Both are
+    # required by `actions/deploy-pages`.
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    # GitHub-managed Pages environment. Surfaces the deploy URL on
+    # the Actions run page and the repo's "Environments" tab.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

@@ -1,0 +1,80 @@
+---
+title: evault
+description: Secure cross-platform TUI + CLI for managing environment variables.
+template: splash
+hero:
+  tagline: |
+    Keep every project's environment variables in one place. Secrets in your
+    OS keyring, metadata in encrypted SQLite, projects bound via a declarative
+    `evault.toml` manifest. No plaintext `.env` on disk.
+  image:
+    file: ../../../public/logo.svg
+  actions:
+    - text: Install & first run
+      link: /hide-env-keys/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/stescobedo/hide-env-keys
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+## What evault gives you
+
+<CardGrid stagger>
+  <Card title="OS-native secret storage" icon="seti:lock">
+    Secrets live in Windows Credential Manager, macOS Keychain, or Linux
+    Secret Service — never on disk in plaintext, never on the network.
+  </Card>
+  <Card title="Encrypted metadata at rest" icon="seti:db">
+    Variable names, lengths, and timestamps are persisted in a SQLite
+    database that can be encrypted at rest with SQLCipher and a 256-bit
+    master key generated on first run.
+  </Card>
+  <Card title="Per-project manifests" icon="document">
+    A declarative <code>evault.toml</code> binds variables to projects with
+    profiles for dev / staging / prod. Values stay central; only references
+    live in the project tree.
+  </Card>
+  <Card title="Inject without writing .env" icon="rocket">
+    <code>evault run</code> spawns a child process with the resolved
+    environment overlay applied directly — no <code>.env</code> file ever
+    touches disk.
+  </Card>
+  <Card title="Interactive TUI" icon="laptop">
+    A ratatui-based dashboard with CRUD, link-to-project, view-value,
+    fuzzy filter, error modals, and inline command execution.
+  </Card>
+  <Card title="Source-code scanner" icon="magnifier">
+    Walk a project tree and classify every variable reference as orphan,
+    unused, or referenced — across JS/TS, Python, Rust, Go, and Shell.
+  </Card>
+</CardGrid>
+
+## Quick links
+
+<CardGrid>
+  <LinkCard
+    title="Install & first run"
+    description="Pre-built binaries, cargo install, npm install."
+    href="/hide-env-keys/getting-started/"
+  />
+  <LinkCard
+    title="TUI keybindings"
+    description="Every key the TUI listens to, in one table."
+    href="/hide-env-keys/tui/keybindings/"
+  />
+  <LinkCard
+    title="CLI reference"
+    description="Each subcommand, its flags, and an example invocation."
+    href="/hide-env-keys/cli/reference/"
+  />
+  <LinkCard
+    title="Security model"
+    description="Master key, secret storage, validation, child-process isolation."
+    href="/hide-env-keys/reference/security/"
+  />
+</CardGrid>

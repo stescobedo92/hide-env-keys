@@ -44,6 +44,11 @@ npm/dist/
 npm/bin/evault
 npm/bin/evault.exe
 
+# Astro / Starlight docs site (built artifacts)
+docs/dist/
+docs/.astro/
+docs/.pagefind/
+
 # Misc
 *.bak
 *.tmp
