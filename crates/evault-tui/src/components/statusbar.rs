@@ -30,10 +30,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
         Span::styled("\u{2022} ", dim),
         Span::styled(format!("rows: {} ", app.rows().len()), dim),
         Span::styled("\u{2022} ", dim),
-        Span::styled(format!("secrets: {secrets_marker} "), dim),
-        Span::styled("\u{2022} ", dim),
-        Span::styled("? help  ", dim),
-        Span::styled("q quit", dim),
+        Span::styled(format!("secrets: {secrets_marker}"), dim),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }

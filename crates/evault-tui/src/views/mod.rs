@@ -11,21 +11,22 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::{AppState, View};
-use crate::components::{fuzzy_input, modal, statusbar, toast};
+use crate::components::{fuzzy_input, keybindings, modal, statusbar, toast};
 use crate::theme::Theme;
 
 /// Render the full UI for the current `app` state.
 ///
 /// Composes the dashboard, optional fuzzy-input strip, optional
-/// toast strip, status bar, and (when active) the help overlay.
-/// The runtime calls this from inside `terminal.draw(...)`.
+/// toast strip, the persistent keybindings hint bar, the status
+/// bar, and (when active) any modal overlays.
 pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let area = frame.area();
 
     // Layout, top-down:
-    //   - body (dashboard) — flexible
-    //   - fuzzy input (1 row, only when a filter is active)
-    //   - toast (1 row, only when a toast is showing)
+    //   - body (dashboard / detail)             — flexible (`Min(1)`)
+    //   - fuzzy input (1 row, only when active)
+    //   - toast (1 row, only when active)
+    //   - keybindings hint bar (`HEIGHT` rows, always)
     //   - status bar (1 row, always)
     //
     // We compose the constraint slice dynamically so optional rows
@@ -40,6 +41,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     if show_toast {
         constraints.push(Constraint::Length(1));
     }
+    constraints.push(Constraint::Length(keybindings::HEIGHT));
     constraints.push(Constraint::Length(1)); // status bar
 
     let regions = Layout::vertical(constraints).split(area);
@@ -47,17 +49,22 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let Some(&status) = regions.last() else {
         return;
     };
+    // Keybindings strip sits in the second-to-last slot. `split`
+    // returns at least 2 entries (body + status) so the
+    // `len() - 2` access is safe, but we use `get` for defence.
+    let keybindings_idx = regions.len().saturating_sub(2);
+    let Some(&keybindings_rect) = regions.get(keybindings_idx) else {
+        return;
+    };
 
     match app.current_view() {
         View::Dashboard => dashboard::render(frame, body, app, theme),
         View::Detail => detail::render(frame, body, app, theme),
     }
+    keybindings::render(frame, keybindings_rect, app, theme);
     statusbar::render(frame, status, app, theme);
 
-    // Optional rows are indexed positionally based on which flags
-    // were on. The `split` always returns exactly `constraints.len()`
-    // entries; we use `get` with a graceful no-op to keep
-    // `clippy::indexing_slicing` happy.
+    // Optional rows between body and keybindings strip.
     let mut next = 1_usize;
     if show_filter {
         if let Some(&r) = regions.get(next) {
