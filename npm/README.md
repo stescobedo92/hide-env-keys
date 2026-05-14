@@ -1,0 +1,71 @@
+# evault
+
+[![npm](https://img.shields.io/npm/v/evault.svg)](https://www.npmjs.com/package/evault)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+
+> Secure cross-platform TUI + CLI for managing environment variables. npm wrapper around the Rust binary published at [github.com/stescobedo/hide-env-keys](https://github.com/stescobedo/hide-env-keys).
+
+## Install
+
+```bash
+# Global install
+npm install -g evault
+
+# Project-local
+npm install --save-dev evault
+npx evault
+```
+
+The post-install hook downloads the platform-specific pre-built binary from the matching GitHub Release and verifies its SHA256 checksum. Supported platforms:
+
+| Platform | Architectures |
+|---|---|
+| macOS | x64, arm64 (Apple Silicon) |
+| Linux | x64 |
+| Windows | x64 |
+
+For platforms not listed above, install from source instead:
+
+```bash
+cargo install evault-cli
+```
+
+## Usage
+
+```bash
+# Launch the interactive TUI
+evault
+
+# Or use any subcommand non-interactively
+evault ls
+evault add API_KEY --secret
+evault link API_KEY --project ./my-app
+evault run --project ./my-app -- npm start
+```
+
+See the [main repository README](https://github.com/stescobedo/hide-env-keys/blob/master/README.md) for the full feature set, including:
+
+- TUI dashboard with CRUD, link-to-project, view-value, run-in-project, fuzzy filter
+- Native OS keyring storage for secrets (Credential Manager / Keychain / Secret Service)
+- Optional SQLCipher encryption for the metadata DB
+- `evault.toml` project manifest with profiles for dev / staging / prod
+- Source-code scanner that finds orphan and unused variables
+
+## Where the binary lives
+
+After install, the native binary is at:
+
+```
+node_modules/evault/bin/evault          (macOS / Linux)
+node_modules/evault/bin/evault.exe      (Windows)
+```
+
+## Troubleshooting
+
+**`evault: binary not found at .../bin/evault`** — the postinstall step failed. Re-run it with `npm rebuild evault`. If your platform is supported but the download still fails, set `EVAULT_SKIP_POSTINSTALL=1` and install from source: `cargo install evault-cli`.
+
+**Checksum mismatch** — the downloaded archive does not match the published SHA256. Open an issue at [github.com/stescobedo/hide-env-keys/issues](https://github.com/stescobedo/hide-env-keys/issues).
+
+## License
+
+[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)

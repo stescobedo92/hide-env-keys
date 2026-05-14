@@ -1,0 +1,54 @@
+{
+  "name": "evault",
+  "version": "0.1.0",
+  "description": "Secure cross-platform TUI + CLI for managing environment variables. Secrets in the OS keyring, metadata in encrypted SQLite, projects bound via evault.toml manifests.",
+  "keywords": [
+    "env",
+    "dotenv",
+    "secrets",
+    "vault",
+    "tui",
+    "cli",
+    "environment",
+    "keyring",
+    "credential-manager",
+    "keychain",
+    "secret-service",
+    "sqlcipher"
+  ],
+  "homepage": "https://github.com/stescobedo/hide-env-keys",
+  "bugs": {
+    "url": "https://github.com/stescobedo/hide-env-keys/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stescobedo/hide-env-keys.git"
+  },
+  "license": "MIT",
+  "author": "Sergio Triana Escobedo <stescobedo.31@gmail.com>",
+  "bin": {
+    "evault": "bin/evault.js"
+  },
+  "files": [
+    "bin/evault.js",
+    "bin/install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/install.js",
+    "preuninstall": "node bin/install.js --uninstall || true"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

@@ -1,0 +1,102 @@
+name: Publish npm
+
+# Triggered after the Release workflow publishes the GitHub Release
+# containing the per-platform binaries. We MUST wait for those
+# binaries to exist before publishing, because the npm postinstall
+# script downloads them from the release at install time. A user
+# running `npm install evault` against a version whose Release is
+# half-finished would fail with a 404.
+#
+# Two trigger modes:
+#
+# 1. Automatic: a tag push (matching `v*`) that also fires the Release
+#    workflow. This job runs `needs: wait-for-release` so it only
+#    proceeds once the artifact upload step of the release pipeline
+#    has finished.
+# 2. Manual: `workflow_dispatch` with a version input — useful for
+#    republishing if the npm side fails after the GitHub Release is
+#    already up.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (without the leading "v", e.g. 0.1.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    # On `workflow_run` only proceed if the Release workflow succeeded;
+    # skip silently otherwise so a failed release does not also produce
+    # a noisy "npm publish failed" notification.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            # The Release workflow runs on a tag push; the tag name is
+            # in `head_branch` of the workflow_run event.
+            tag="${{ github.event.workflow_run.head_branch }}"
+            version="${tag#v}"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "::error::could not resolve version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing evault@$version to npm"
+
+      - uses: actions/checkout@v4
+        with:
+          # Check out the tag that the release was cut from, so the
+          # npm/ tree matches the Cargo workspace version.
+          ref: v${{ steps.resolve.outputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Sync npm package version to tag
+        working-directory: npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The release tag is the source of truth. Rewrite
+          # `npm/package.json` so the `version` field matches the tag.
+          # Uses `npm version` with --no-git-tag-version so it does
+          # NOT try to create a tag in the workflow's read-only
+          # checkout.
+          npm version "${{ steps.resolve.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Sanity check the package contents
+        working-directory: npm
+        run: |
+          npm pack --dry-run
+          # Skip the postinstall during the pack/publish step itself;
+          # it would try to download binaries we may have just built.
+        env:
+          EVAULT_SKIP_POSTINSTALL: "1"
+
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Same skip — the publish itself must not run the postinstall.
+          EVAULT_SKIP_POSTINSTALL: "1"

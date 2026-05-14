@@ -38,6 +38,11 @@ openspec/
 # npm
 node_modules/
 npm/dist/
+# Downloaded binaries from the postinstall step land here at install time;
+# they are NEVER committed. The repo only ships `package.json`, `README.md`,
+# `LICENSE`, and the two scripts in `npm/bin/`.
+npm/bin/evault
+npm/bin/evault.exe
 
 # Misc
 *.bak
