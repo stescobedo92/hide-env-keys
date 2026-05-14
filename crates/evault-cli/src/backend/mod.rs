@@ -1,5 +1,5 @@
-//! Backend wiring — adapts a concrete [`RegistryService`] (from
-//! `evault-core`) to the TUI's [`VarProvider`] / [`VarMutator`] traits
+//! Backend wiring — adapts a concrete `RegistryService` (from
+//! `evault-core`) to the TUI's `VarProvider` / `VarMutator` traits
 //! and to the per-subcommand operations the CLI surface uses.
 //!
 //! Most of [`BackendOps`] is dead code today; phase B / D will wire

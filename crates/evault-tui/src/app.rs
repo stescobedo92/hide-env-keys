@@ -1,12 +1,13 @@
 //! Deterministic state machine driving the dashboard.
 
-use evault_core::model::VarId;
+use evault_core::model::{Group, VarId, VarKind};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
+use secrecy::SecretString;
 
 use crate::event::Action;
 use crate::filter::FilterState;
-use crate::provider::{ProviderError, VarProvider, VarSummary};
+use crate::provider::{ProviderError, VarDraft, VarProvider, VarSummary};
 
 /// In-session toast displayed at the bottom of the screen.
 ///
@@ -88,12 +89,17 @@ pub struct AppState {
     /// [`Self::dispatch_key`] routes all keys to the confirm-modal
     /// handler instead of the normal Action / filter paths.
     confirm: Option<ConfirmRequest>,
+    /// Bottom-strip text input currently focused. When `Some`,
+    /// [`Self::dispatch_key`] routes typed characters and editing
+    /// keys to this prompt and bypasses the Action / filter / modal
+    /// paths.
+    prompt: Option<InputPrompt>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
 /// (the runtime) should perform an I/O side effect after the state
 /// has been updated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum DispatchOutcome {
     /// Continue the event loop without further side effects.
     Continue,
@@ -111,6 +117,55 @@ pub enum DispatchOutcome {
         /// Variable identifier the user confirmed deleting.
         id: VarId,
         /// Human-readable name, for use in the post-delete toast.
+        name: String,
+    },
+    /// The user submitted the new-var prompt; the runtime should call
+    /// [`crate::VarMutator::create`] and refresh on success.
+    CreateRequested(VarDraft),
+    /// The user submitted the edit-value prompt; the runtime should
+    /// call [`crate::VarMutator::update_value`] and refresh on success.
+    /// `name` is carried for the post-update toast.
+    UpdateValueRequested {
+        /// Variable to update.
+        id: VarId,
+        /// New value.
+        value: SecretString,
+        /// Human-readable name for the success toast.
+        name: String,
+    },
+}
+
+/// Active bottom-strip input prompt — used by both the `n` (new var)
+/// and `e` (edit value) flows. Crate-internal: external callers see
+/// the prompt via [`AppState::input_prompt`].
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) struct InputPrompt {
+    /// What the prompt is collecting.
+    pub(crate) mode: PromptMode,
+    /// Characters typed so far. Cursor is always at the end.
+    pub(crate) buffer: String,
+    /// Whether the typed characters should be visually masked. Used
+    /// for the value-of-a-secret flow.
+    pub(crate) mask: bool,
+}
+
+/// Variants of the bottom-strip input prompt.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) enum PromptMode {
+    /// New-var creation. The buffer is parsed as `NAME=value` on
+    /// submit. The created var is a Secret in the user group — this
+    /// matches the most common TUI use case. For finer control over
+    /// kind / group, use `evault add` from the shell.
+    NewVar,
+    /// Replace the value of an existing var. The id and name are
+    /// snapshotted at prompt-open time so the action remains valid
+    /// even if the selection changes underneath.
+    EditValue {
+        /// Target variable id (snapshotted at prompt open).
+        id: VarId,
+        /// Display name shown in the prompt label.
         name: String,
     },
 }
@@ -166,6 +221,7 @@ impl AppState {
             view: View::Dashboard,
             detail_target: None,
             confirm: None,
+            prompt: None,
         }
     }
 
@@ -241,6 +297,11 @@ impl AppState {
         if self.confirm.is_some() {
             return self.dispatch_confirm_key(key);
         }
+        // Bottom-strip prompt steals focus next: typed characters
+        // must go to the prompt buffer, not to filter / Action paths.
+        if self.prompt.is_some() {
+            return self.dispatch_prompt_key(key);
+        }
         if self.is_filter_input_active() {
             return self.dispatch_filter_input_key(key);
         }
@@ -250,6 +311,103 @@ impl AppState {
             DispatchOutcome::RefreshRequested
         } else {
             DispatchOutcome::Continue
+        }
+    }
+
+    /// Handle a key while the bottom-strip prompt is focused.
+    ///
+    /// Recognised keys:
+    /// - `Esc` — cancel the prompt; restore the underlying view.
+    /// - `Enter` — submit; returns `CreateRequested` or
+    ///   `UpdateValueRequested` depending on prompt mode.
+    /// - `Backspace` — pop one character from the buffer.
+    /// - `Ctrl+C` — quit (escape hatch).
+    /// - Any other printable character (no Ctrl modifier) — append to
+    ///   the buffer.
+    fn dispatch_prompt_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.prompt = None;
+                DispatchOutcome::Continue
+            }
+            KeyCode::Backspace => {
+                if let Some(prompt) = self.prompt.as_mut() {
+                    prompt.buffer.pop();
+                }
+                DispatchOutcome::Continue
+            }
+            KeyCode::Char(c) if !ctrl => {
+                if let Some(prompt) = self.prompt.as_mut() {
+                    prompt.buffer.push(c);
+                }
+                DispatchOutcome::Continue
+            }
+            KeyCode::Enter => self.submit_prompt(),
+            _ => DispatchOutcome::Continue,
+        }
+    }
+
+    /// Validate the prompt buffer and emit the matching outcome.
+    /// On validation failure, surfaces a sticky error toast and
+    /// leaves the prompt open so the user can fix the input.
+    fn submit_prompt(&mut self) -> DispatchOutcome {
+        let Some(prompt) = self.prompt.take() else {
+            return DispatchOutcome::Continue;
+        };
+        match prompt.mode {
+            PromptMode::NewVar => {
+                let raw = prompt.buffer;
+                let Some((name, value)) = raw.split_once('=') else {
+                    self.set_error_toast("format: NAME=value (Esc to cancel)");
+                    // Restore the prompt with the buffer so the user
+                    // doesn't lose what they typed.
+                    self.prompt = Some(InputPrompt {
+                        mode: PromptMode::NewVar,
+                        buffer: raw,
+                        mask: false,
+                    });
+                    return DispatchOutcome::Continue;
+                };
+                let name = name.trim().to_owned();
+                let value = value.to_owned();
+                if name.is_empty() || value.is_empty() {
+                    self.set_error_toast("name and value must be non-empty (Esc to cancel)");
+                    self.prompt = Some(InputPrompt {
+                        mode: PromptMode::NewVar,
+                        buffer: format!("{name}={value}"),
+                        mask: false,
+                    });
+                    return DispatchOutcome::Continue;
+                }
+                DispatchOutcome::CreateRequested(VarDraft {
+                    name,
+                    group: Group::User,
+                    kind: VarKind::Secret,
+                    value: SecretString::new(value.into()),
+                })
+            }
+            PromptMode::EditValue { id, name } => {
+                let value = prompt.buffer;
+                if value.is_empty() {
+                    self.set_error_toast("value must be non-empty (Esc to cancel)");
+                    self.prompt = Some(InputPrompt {
+                        mode: PromptMode::EditValue { id, name },
+                        buffer: value,
+                        mask: true,
+                    });
+                    return DispatchOutcome::Continue;
+                }
+                DispatchOutcome::UpdateValueRequested {
+                    id,
+                    value: SecretString::new(value.into()),
+                    name,
+                }
+            }
         }
     }
 
@@ -373,17 +531,15 @@ impl AppState {
             Action::StartFuzzy => self.open_filter(),
             Action::OpenDetail => self.open_detail(),
             Action::DeleteVar => self.request_delete_confirmation(),
+            Action::NewVar => self.open_new_var_prompt(),
+            Action::EditVar => self.open_edit_value_prompt(),
             Action::Noop => {}
-            // Phase-2c surfaces: not yet wired to a registry. We surface
-            // a toast so the user knows the key was *received* but the
-            // operation is not yet implemented.
-            Action::NewVar
-            | Action::EditVar
-            | Action::LinkVar
-            | Action::CopyValue
-            | Action::SwitchProfile
-            | Action::NextView => {
-                self.set_info_toast("not implemented in this build");
+            // Remaining stubs — link / copy / profile / next-view.
+            // These are tracked for future implementation; the toast
+            // tells the user the key was received but the operation
+            // is not yet wired.
+            Action::LinkVar | Action::CopyValue | Action::SwitchProfile | Action::NextView => {
+                self.set_info_toast("not implemented yet (use `evault link/copy` from shell)");
             }
         }
     }
@@ -476,6 +632,51 @@ impl AppState {
         if self.detail_target == Some(id) {
             self.return_to_dashboard();
         }
+    }
+
+    /// Open the bottom-strip prompt for creating a new variable.
+    /// The user types `NAME=value` and presses Enter to submit.
+    fn open_new_var_prompt(&mut self) {
+        self.prompt = Some(InputPrompt {
+            mode: PromptMode::NewVar,
+            buffer: String::new(),
+            mask: false,
+        });
+    }
+
+    /// Open the bottom-strip prompt for editing the value of the
+    /// currently-targeted variable. Surfaces an info toast if there
+    /// is no row selected (without clobbering a sticky error toast).
+    fn open_edit_value_prompt(&mut self) {
+        let target = match self.view {
+            View::Dashboard => self.selected_row(),
+            View::Detail => self.detail_row(),
+        };
+        let Some(var) = target else {
+            if !self.toast_is_error() {
+                self.set_info_toast("no row selected");
+            }
+            return;
+        };
+        self.prompt = Some(InputPrompt {
+            mode: PromptMode::EditValue {
+                id: var.id,
+                name: var.name.clone(),
+            },
+            buffer: String::new(),
+            mask: matches!(var.kind, VarKind::Secret),
+        });
+    }
+
+    /// Whether the bottom-strip input prompt is currently focused.
+    #[must_use]
+    pub const fn is_prompt_visible(&self) -> bool {
+        self.prompt.is_some()
+    }
+
+    /// Read-only access to the focused prompt (for the views layer).
+    pub(crate) const fn current_prompt(&self) -> Option<&InputPrompt> {
+        self.prompt.as_ref()
     }
 
     /// Raise a confirmation modal for deleting the currently-targeted
@@ -1171,7 +1372,7 @@ mod tests {
         let mut app = AppState::new();
         app.refresh(&five_rows()).unwrap();
         let outcome = app.dispatch_key(press(KeyCode::Char('r')));
-        assert_eq!(outcome, DispatchOutcome::RefreshRequested);
+        assert!(matches!(outcome, DispatchOutcome::RefreshRequested));
     }
 
     #[test]
@@ -1444,7 +1645,7 @@ mod tests {
         // must NOT take effect while a confirm is focused.
         let s = press(KeyCode::Char('s'));
         let outcome = app.dispatch_key(s);
-        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(matches!(outcome, DispatchOutcome::Continue));
         assert!(!app.secrets_visible(), "modal must steal focus from `s`");
         assert!(app.is_confirm_visible());
 
@@ -1460,12 +1661,12 @@ mod tests {
         app.refresh(&five_rows()).unwrap();
         app.apply(Action::DeleteVar);
         let outcome = app.dispatch_key(press(KeyCode::Char('n')));
-        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(matches!(outcome, DispatchOutcome::Continue));
         assert!(!app.is_confirm_visible());
 
         app.apply(Action::DeleteVar);
         let outcome = app.dispatch_key(press(KeyCode::Esc));
-        assert_eq!(outcome, DispatchOutcome::Continue);
+        assert!(matches!(outcome, DispatchOutcome::Continue));
         assert!(!app.is_confirm_visible());
     }
 
@@ -1478,13 +1679,13 @@ mod tests {
         app.apply(Action::DeleteVar);
         let outcome = app.dispatch_key(press(KeyCode::Char('y')));
         assert!(!app.is_confirm_visible(), "modal must clear after accept");
-        assert_eq!(
-            outcome,
-            DispatchOutcome::DeleteRequested {
-                id: target_id,
-                name: "API_KEY".into()
+        match outcome {
+            DispatchOutcome::DeleteRequested { id, name } => {
+                assert_eq!(id, target_id);
+                assert_eq!(name, "API_KEY");
             }
-        );
+            other => panic!("expected DeleteRequested, got {other:?}"),
+        }
     }
 
     #[test]

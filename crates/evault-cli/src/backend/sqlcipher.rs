@@ -35,7 +35,7 @@ use evault_core::traits::{SystemClock, UuidV4IdGenerator};
 use evault_store_keyring::OsKeyringSecretStore;
 use evault_store_memory::MemoryAuditSink;
 use evault_store_sqlcipher::SqlCipherMetadataStore;
-use evault_tui::{ProviderError, VarMutator, VarProvider, VarSummary};
+use evault_tui::{ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 
@@ -220,6 +220,14 @@ impl VarMutator for SqlCipherBackend {
         self.registry
             .delete_var(id)
             .map_err(|e| core_to_provider(&e))
+    }
+
+    fn create(&self, draft: VarDraft) -> Result<VarId, ProviderError> {
+        BackendOps::create_var(self, &draft.name, draft.group, draft.kind, draft.value)
+    }
+
+    fn update_value(&self, id: VarId, value: SecretString) -> Result<(), ProviderError> {
+        BackendOps::update_value(self, id, value)
     }
 }
 

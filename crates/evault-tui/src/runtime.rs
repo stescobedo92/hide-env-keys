@@ -93,6 +93,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn event_loop<B>(terminal: &mut DefaultTerminal, backend: &B) -> Result<(), TuiError>
 where
     B: VarProvider + VarMutator + ?Sized,
@@ -155,6 +156,49 @@ where
                             app.set_info_toast(msg);
                         }
                         Err(e) => app.set_error_toast(e.to_string()),
+                    }
+                }
+                DispatchOutcome::CreateRequested(draft) => {
+                    let name = draft.name.clone();
+                    let create_result =
+                        panic::catch_unwind(AssertUnwindSafe(|| backend.create(draft)));
+                    match create_result {
+                        Err(_) => {
+                            app.set_error_toast("create crashed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("create failed: {e}"));
+                        }
+                        Ok(Ok(_id)) => {
+                            if let Err(e) = app.refresh(backend) {
+                                app.set_error_toast(format!(
+                                    "created `{name}` but refresh failed: {e}"
+                                ));
+                            } else {
+                                app.set_info_toast(format!("created `{name}`"));
+                            }
+                        }
+                    }
+                }
+                DispatchOutcome::UpdateValueRequested { id, value, name } => {
+                    let update_result =
+                        panic::catch_unwind(AssertUnwindSafe(|| backend.update_value(id, value)));
+                    match update_result {
+                        Err(_) => {
+                            app.set_error_toast("update crashed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("update failed: {e}"));
+                        }
+                        Ok(Ok(())) => {
+                            if let Err(e) = app.refresh(backend) {
+                                app.set_error_toast(format!(
+                                    "updated `{name}` but refresh failed: {e}"
+                                ));
+                            } else {
+                                app.set_info_toast(format!("updated `{name}`"));
+                            }
+                        }
                     }
                 }
                 DispatchOutcome::DeleteRequested { id, name } => {

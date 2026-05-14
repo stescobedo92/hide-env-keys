@@ -1328,6 +1328,7 @@ dependencies = [
  "evault-core",
  "nucleo-matcher",
  "ratatui",
+ "secrecy",
  "thiserror 2.0.18",
  "time",
 ]

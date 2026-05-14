@@ -1,6 +1,7 @@
 //! Adapter trait between the TUI and any data source.
 
 use evault_core::model::{Group, VarId, VarKind};
+use secrecy::SecretString;
 use thiserror::Error;
 use time::OffsetDateTime;
 
@@ -107,4 +108,37 @@ pub trait VarMutator: Send + Sync {
     /// perform the delete. The TUI surfaces the message as a sticky
     /// error toast and the user can retry from the dashboard.
     fn delete(&self, id: VarId) -> Result<(), ProviderError>;
+
+    /// Create a new variable from a user-supplied draft, returning
+    /// its assigned id. Same performance contract as [`Self::delete`].
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on validation failure (invalid name,
+    /// duplicate, empty value) or storage failure.
+    fn create(&self, draft: VarDraft) -> Result<VarId, ProviderError>;
+
+    /// Replace an existing variable's value. Same performance
+    /// contract as [`Self::delete`].
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on validation failure or storage
+    /// failure.
+    fn update_value(&self, id: VarId, value: SecretString) -> Result<(), ProviderError>;
+}
+
+/// A drafted variable awaiting backend creation.
+///
+/// Carries the four fields the TUI's `n` (new-var) prompt captures
+/// from the user before emitting `DispatchOutcome::CreateRequested`.
+/// `value` is wrapped in [`SecretString`] so it gets zeroized on drop.
+#[derive(Debug, Clone)]
+pub struct VarDraft {
+    /// Variable name (validated by the registry on create).
+    pub name: String,
+    /// Logical group (`user` / `system` / `project` / custom).
+    pub group: Group,
+    /// Storage tier — secret (keyring) or plain (metadata DB).
+    pub kind: VarKind,
+    /// The value to store.
+    pub value: SecretString,
 }

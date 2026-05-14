@@ -18,5 +18,6 @@ workspace = true
 evault-core = { path = "../evault-core", version = "0.1" }
 nucleo-matcher = "0.3"
 ratatui = "0.30"
+secrecy = "0.10"
 thiserror = "2.0"
 time = { version = "0.3", features = ["formatting", "macros"] }

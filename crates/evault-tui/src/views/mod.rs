@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::{AppState, View};
-use crate::components::{fuzzy_input, modal, statusbar, toast};
+use crate::components::{editor, fuzzy_input, modal, statusbar, toast};
 use crate::theme::Theme;
 
 /// Render the full UI for the current `app` state.
@@ -28,10 +28,14 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     // We compose the constraint slice dynamically so optional rows
     // do not steal vertical space when they are not on-screen.
     let show_filter = app.is_filter_active();
+    let show_prompt = app.is_prompt_visible();
     let show_toast = app.toast_text().is_some();
 
     let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
     if show_filter {
+        constraints.push(Constraint::Length(1));
+    }
+    if show_prompt {
         constraints.push(Constraint::Length(1));
     }
     if show_toast {
@@ -59,6 +63,12 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     if show_filter {
         if let Some(&r) = regions.get(next) {
             fuzzy_input::render(frame, r, app, theme);
+        }
+        next += 1;
+    }
+    if show_prompt {
+        if let Some(&r) = regions.get(next) {
+            editor::render(frame, r, app, theme);
         }
         next += 1;
     }

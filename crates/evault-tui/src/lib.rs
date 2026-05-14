@@ -71,6 +71,6 @@ mod views;
 pub use app::{AppState, DispatchOutcome, View};
 pub use error::TuiError;
 pub use event::Action;
-pub use provider::{ProviderError, VarMutator, VarProvider, VarSummary};
+pub use provider::{ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 pub use runtime::run_tui;
 pub use theme::Theme;
