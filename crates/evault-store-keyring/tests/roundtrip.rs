@@ -42,16 +42,46 @@ fn uuid_like() -> String {
         .unwrap_or_else(|_| "0-0".into())
 }
 
-/// Try to construct a store. If the platform is headless / has no backend
-/// available, return `None` so the test can skip gracefully.
+/// Try to construct a store AND verify it can actually write.
+///
+/// Returns `None` when the platform has no usable backend so the
+/// test skips gracefully. This catches two distinct failure modes:
+///
+/// 1. `with_service` fails outright (no D-Bus / Secret Service).
+///    The classic headless-Linux case.
+/// 2. `with_service` succeeds but `put` fails with `Unavailable`.
+///    Seen on CI runners where `gnome-keyring-daemon` starts but the
+///    secrets component is in a bad state (locked keyring, session
+///    not properly initialised, etc.). The first case skips on init;
+///    this second case is what the probe-write below catches.
 fn try_store(test_name: &str) -> Option<OsKeyringSecretStore> {
-    match OsKeyringSecretStore::with_service(unique_service(test_name)) {
-        Ok(s) => Some(s),
+    let store = match OsKeyringSecretStore::with_service(unique_service(test_name)) {
+        Ok(s) => s,
         Err(SecretError::Unavailable) => {
-            eprintln!("skipping {test_name}: no usable keyring backend (likely headless Linux)");
-            None
+            eprintln!(
+                "skipping {test_name}: no usable keyring backend at init (likely headless Linux)"
+            );
+            return None;
         }
         Err(e) => panic!("unexpected init failure: {e:?}"),
+    };
+    // Probe a write+delete cycle so we don't fail later inside the
+    // test body with a misleading `expect("put")` panic.
+    let probe = VarId::new_v4();
+    match store.put(probe, SecretString::from(String::from("probe"))) {
+        Ok(()) => {
+            // Best-effort cleanup; the probe id will never be reused.
+            let _ = store.delete(probe);
+            Some(store)
+        }
+        Err(SecretError::Unavailable) => {
+            eprintln!(
+                "skipping {test_name}: keyring write probe returned Unavailable \
+                 (daemon present but rejecting puts — common on headless CI)"
+            );
+            None
+        }
+        Err(e) => panic!("unexpected probe-write failure: {e:?}"),
     }
 }
 
