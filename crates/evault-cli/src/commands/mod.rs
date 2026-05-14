@@ -1,0 +1,16 @@
+//! Non-interactive CLI subcommands.
+//!
+//! Each subcommand is a small free function generic over the
+//! backend's trait bounds. The static dispatch in `main::dispatch`
+//! monomorphises each call for the concrete backend type (in-memory
+//! or SQLCipher), so a single subcommand body runs the same code
+//! against either backing store.
+//!
+//! All subcommand functions return [`crate::error::CliError`] so the
+//! top-level `main` can chain-walk and format errors uniformly.
+
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
+pub mod add;
+pub mod ls;
+pub mod rm;

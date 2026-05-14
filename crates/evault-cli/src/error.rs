@@ -16,8 +16,10 @@ use crate::backend::SqlCipherOpenError;
 #[derive(Error, Debug)]
 pub enum CliError {
     /// A subcommand was recognised by the parser but not yet wired.
-    /// Phase 1 ships the TUI only; `ls` / `add` / `rm` arrive in
-    /// phase 2.
+    /// Reserved for Batch D's still-stubbed subcommands (`link`,
+    /// `gen`, `run`, `scan`, `import`, `export`); `ls` / `add` / `rm`
+    /// landed in Batch B.
+    #[allow(dead_code)]
     #[error("'{name}' is not yet implemented in this build")]
     SubcommandUnimplemented {
         /// Subcommand the user invoked (verbatim — `ls`, `add`, `rm`,
@@ -35,6 +37,10 @@ pub enum CliError {
     /// carries the chain walker through its `source()` implementations.
     #[error("backend open error")]
     BackendOpen(#[from] SqlCipherOpenError),
+    /// Generic I/O failure (terminal prompt, stdout, stdin) from a
+    /// non-TUI subcommand path.
+    #[error("io error")]
+    Io(#[from] std::io::Error),
 }
 
 /// Format an error and its full `source()` chain into a single line
