@@ -360,25 +360,31 @@ where
     Ok(())
 }
 
-/// Contextual hint for a failed `create` action. Inspects the
-/// backend's error message and returns the most useful explanation
-/// we can offer. Returns `None` for messages that already explain
-/// themselves.
+/// Contextual hint for a failed `create` action.
+///
+/// Inspects the backend's error message and returns a plain-English
+/// explanation. Multi-line hints use `\n` between bullets — the
+/// error modal renders each line separately.
 fn create_hint(msg: &str) -> Option<String> {
     let lower = msg.to_ascii_lowercase();
     if lower.contains("invalid character") || lower.contains("invalid name") {
         return Some(
-            "Names must match `^[A-Za-z_][A-Za-z0-9_]{0,63}$`: start with \
-             a letter or underscore, then only letters, digits, or \
-             underscores. Max 64 characters. Dashes, spaces, and \
-             accents are NOT allowed."
+            "Variable names have these rules:\n\
+             \u{2022} Start with a letter (A-Z or a-z) or an underscore (_)\n\
+             \u{2022} After the first character, use only letters, digits, \
+             or underscores\n\
+             \u{2022} Maximum 64 characters\n\
+             \u{2022} Not allowed: dashes, spaces, dots, accents, or other \
+             punctuation\n\
+             \n\
+             Try a name like API_KEY, DATABASE_URL, or my_token."
                 .to_owned(),
         );
     }
     if lower.contains("duplicate") || lower.contains("already exists") {
         return Some(
             "A variable with that name already exists. Pick a different \
-             name, or press `e` on the existing row to update its value."
+             name, or press e on the existing row to update its value."
                 .to_owned(),
         );
     }
@@ -387,8 +393,8 @@ fn create_hint(msg: &str) -> Option<String> {
     }
     if lower.contains("too long") {
         return Some(
-            "Names cap at 64 characters; values typically cap around \
-             1 MB depending on the storage backend."
+            "Names are limited to 64 characters. Values typically cap \
+             around 1 MB depending on the storage backend."
                 .to_owned(),
         );
     }
@@ -404,7 +410,7 @@ fn update_hint(msg: &str) -> Option<String> {
     if lower.contains("not found") || lower.contains("no variable") {
         return Some(
             "The variable was deleted by another process before the \
-             update could complete. Press `r` to refresh the dashboard."
+             update could complete. Press r to refresh the dashboard."
                 .to_owned(),
         );
     }
@@ -423,23 +429,24 @@ fn link_hint(msg: &str) -> Option<String> {
     }
     if lower.contains("canonicalise") || lower.contains("canonicalize") {
         return Some(
-            "Could not resolve the project path to an absolute one. \
-             Check that the path syntax is valid for your platform."
+            "Could not resolve the project path. Check that the path \
+             syntax is valid for your platform (use forward slashes on \
+             Linux/macOS, backslashes or forward slashes on Windows)."
                 .to_owned(),
         );
     }
     if lower.contains("manifest") {
         return Some(
-            "Could not read or write the project's `evault.toml`. \
+            "Could not read or write the project's evault.toml file. \
              Check filesystem permissions on the project directory."
                 .to_owned(),
         );
     }
     if lower.contains("materialize") {
         return Some(
-            "Linking succeeded but writing `.env` failed. The binding \
-             is recorded; try `evault gen --project PATH` from the \
-             shell to retry materialization."
+            "Linking succeeded but writing the .env file failed. The \
+             binding is recorded; you can retry materialization later \
+             with evault gen --project PATH from the shell."
                 .to_owned(),
         );
     }

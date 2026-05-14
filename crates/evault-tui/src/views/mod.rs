@@ -98,9 +98,10 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
 
     // Error modal sits at the TOP of the layer stack — when an
     // action fails the user must acknowledge before anything else
-    // can be interacted with.
+    // can be interacted with. Sized generously (60% x 50%) so a
+    // multi-line hint with bullets fits comfortably.
     if app.is_error_modal_visible() {
-        error_modal::render(frame, centered(area, 60, 35), app, theme);
+        error_modal::render(frame, centered(area, 60, 50), app, theme);
     }
 }
 

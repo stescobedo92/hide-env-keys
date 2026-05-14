@@ -38,17 +38,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     frame.render_widget(block, area);
 
     let rows = Layout::vertical([
-        Constraint::Length(1), // spacer
+        Constraint::Length(1), // top spacer
         Constraint::Min(2),    // message (wraps)
         Constraint::Length(1), // spacer
-        Constraint::Min(1),    // hint (wraps; can be empty)
+        Constraint::Min(3),    // hint (wraps; multi-line via \n)
         Constraint::Length(1), // spacer
         Constraint::Length(1), // dismiss hint
     ])
     .split(inner);
 
-    // Message line(s) — leading error icon then the raw backend
-    // message. Wrapped so long messages don't get truncated.
+    // Message — leading error icon then the raw backend message,
+    // wrapped so long messages don't get truncated.
     if let Some(&r) = rows.get(1) {
         let lines = vec![Line::from(vec![
             Span::styled(
@@ -60,14 +60,21 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), r);
     }
 
-    // Optional hint — rendered in dim style so it's clearly
-    // secondary to the error message itself.
+    // Optional hint — rendered as one Line per `\n`-separated chunk
+    // so bullet lists and paragraph breaks survive intact. Each
+    // line is then wrapped independently if it overflows the modal
+    // width. Empty lines (from blank `\n\n`) become spacers.
     if let (Some(&r), Some(hint)) = (rows.get(3), modal.hint.as_deref()) {
-        let para = Paragraph::new(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(hint.to_owned(), theme.dim_cell()),
-        ]))
-        .wrap(Wrap { trim: false });
+        let lines: Vec<Line<'_>> = hint
+            .split('\n')
+            .map(|chunk| {
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(chunk.to_owned(), theme.dim_cell()),
+                ])
+            })
+            .collect();
+        let para = Paragraph::new(lines).wrap(Wrap { trim: false });
         frame.render_widget(para, r);
     }
 
