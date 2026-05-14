@@ -12,5 +12,11 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 pub mod add;
+pub mod export;
+pub mod gen;
+pub mod import;
+pub mod link;
 pub mod ls;
 pub mod rm;
+pub mod run;
+pub mod scan;
