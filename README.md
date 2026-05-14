@@ -1,8 +1,6 @@
-<p align="center">
+<h1 align="center">
   <img src="docs/public/logo.svg" alt="evault" height="72" />
-</p>
-
-<h1 align="center">evault</h1>
+</h1>
 
 <p align="center">
   <strong>Secure cross-platform TUI + CLI for managing environment variables.</strong>
