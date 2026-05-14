@@ -2,13 +2,14 @@
 
 pub mod dashboard;
 pub mod detail;
+pub mod editor;
 pub mod help;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::{AppState, View};
-use crate::components::{editor, fuzzy_input, modal, statusbar, toast};
+use crate::components::{fuzzy_input, modal, statusbar, toast};
 use crate::theme::Theme;
 
 /// Render the full UI for the current `app` state.
@@ -28,14 +29,10 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     // We compose the constraint slice dynamically so optional rows
     // do not steal vertical space when they are not on-screen.
     let show_filter = app.is_filter_active();
-    let show_prompt = app.is_prompt_visible();
     let show_toast = app.toast_text().is_some();
 
     let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
     if show_filter {
-        constraints.push(Constraint::Length(1));
-    }
-    if show_prompt {
         constraints.push(Constraint::Length(1));
     }
     if show_toast {
@@ -66,12 +63,6 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
         }
         next += 1;
     }
-    if show_prompt {
-        if let Some(&r) = regions.get(next) {
-            editor::render(frame, r, app, theme);
-        }
-        next += 1;
-    }
     if show_toast {
         if let Some(&r) = regions.get(next) {
             toast::render(frame, r, app, theme);
@@ -82,8 +73,17 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
         help::render(frame, centered(area, 60, 70), theme);
     }
 
+    // Editor form modal: drawn before the confirm modal so a delete
+    // confirmation that fires while the editor is open still sits
+    // on top. In practice this cannot happen because the editor
+    // steals focus, but the layer order is preserved for clarity.
+    if app.is_form_visible() {
+        editor::render(frame, centered(area, 60, 35), app, theme);
+    }
+
     // Confirm modal: drawn last so it sits on top of every other
-    // layer (dashboard / detail / filter input / toast / help).
+    // layer (dashboard / detail / filter input / toast / help /
+    // editor).
     if let Some(req) = app.current_confirm() {
         modal::render(frame, centered(area, 50, 25), req, theme);
     }

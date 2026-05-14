@@ -89,11 +89,11 @@ pub struct AppState {
     /// [`Self::dispatch_key`] routes all keys to the confirm-modal
     /// handler instead of the normal Action / filter paths.
     confirm: Option<ConfirmRequest>,
-    /// Bottom-strip text input currently focused. When `Some`,
+    /// Editor form (modal popup) currently focused. When `Some`,
     /// [`Self::dispatch_key`] routes typed characters and editing
-    /// keys to this prompt and bypasses the Action / filter / modal
+    /// keys to this form and bypasses the Action / filter / modal
     /// paths.
-    prompt: Option<InputPrompt>,
+    form: Option<EditorForm>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
@@ -135,40 +135,66 @@ pub enum DispatchOutcome {
     },
 }
 
-/// Active bottom-strip input prompt — used by both the `n` (new var)
-/// and `e` (edit value) flows. Crate-internal: external callers see
-/// the prompt via [`AppState::input_prompt`].
+/// Active editor form — modal popup for the `n` (new var) and `e`
+/// (edit value) flows. Replaces the bottom-strip prompt with a
+/// centered window that has multiple fields (name / group / kind /
+/// value).
 #[allow(clippy::redundant_pub_crate)]
 #[derive(Debug, Clone)]
-pub(crate) struct InputPrompt {
-    /// What the prompt is collecting.
-    pub(crate) mode: PromptMode,
-    /// Characters typed so far. Cursor is always at the end.
-    pub(crate) buffer: String,
-    /// Whether the typed characters should be visually masked. Used
-    /// for the value-of-a-secret flow.
-    pub(crate) mask: bool,
+pub(crate) struct EditorForm {
+    /// What the form is collecting.
+    pub(crate) mode: EditorMode,
+    /// Variable name. Editable only in `NewVar` mode.
+    pub(crate) name: String,
+    /// Variable value (the secret material). Always editable.
+    pub(crate) value: String,
+    /// Index into [`GROUP_CYCLE`].
+    pub(crate) group_idx: usize,
+    /// Index into [`KIND_CYCLE`].
+    pub(crate) kind_idx: usize,
+    /// Currently-focused field — receives typing / arrow input.
+    pub(crate) focus: FormField,
+    /// Whether the value field should be rendered verbatim (true)
+    /// or as `*` characters (false). Defaults to false for Secret
+    /// kind, true for Plain.
+    pub(crate) show_value: bool,
 }
 
-/// Variants of the bottom-strip input prompt.
+/// What the editor form is collecting.
 #[allow(clippy::redundant_pub_crate)]
 #[derive(Debug, Clone)]
-pub(crate) enum PromptMode {
-    /// New-var creation. The buffer is parsed as `NAME=value` on
-    /// submit. The created var is a Secret in the user group — this
-    /// matches the most common TUI use case. For finer control over
-    /// kind / group, use `evault add` from the shell.
+pub(crate) enum EditorMode {
+    /// Creating a new variable. All four fields are editable.
     NewVar,
-    /// Replace the value of an existing var. The id and name are
-    /// snapshotted at prompt-open time so the action remains valid
-    /// even if the selection changes underneath.
+    /// Replacing the value of an existing variable. The name /
+    /// group / kind are display-only; only the value field accepts
+    /// input.
     EditValue {
-        /// Target variable id (snapshotted at prompt open).
+        /// Target variable id (snapshotted at form-open time).
         id: VarId,
-        /// Display name shown in the prompt label.
-        name: String,
+        /// Original variable name, shown read-only.
+        original_name: String,
     },
 }
+
+/// Field currently focused inside [`EditorForm`].
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormField {
+    Name,
+    Group,
+    Kind,
+    Value,
+}
+
+/// Groups exposed by the TUI cycler. Custom groups remain available
+/// via the CLI's `--group` flag.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) const GROUP_CYCLE: &[Group] = &[Group::User, Group::System, Group::Project];
+
+/// Kinds exposed by the TUI cycler.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) const KIND_CYCLE: &[VarKind] = &[VarKind::Secret, VarKind::Plain];
 
 /// Modal confirmation request — internal state for the y/n overlay.
 ///
@@ -221,7 +247,7 @@ impl AppState {
             view: View::Dashboard,
             detail_target: None,
             confirm: None,
-            prompt: None,
+            form: None,
         }
     }
 
@@ -297,10 +323,10 @@ impl AppState {
         if self.confirm.is_some() {
             return self.dispatch_confirm_key(key);
         }
-        // Bottom-strip prompt steals focus next: typed characters
-        // must go to the prompt buffer, not to filter / Action paths.
-        if self.prompt.is_some() {
-            return self.dispatch_prompt_key(key);
+        // Modal editor form steals focus next: typed characters
+        // must go to the active field, not to filter / Action paths.
+        if self.form.is_some() {
+            return self.dispatch_form_key(key);
         }
         if self.is_filter_input_active() {
             return self.dispatch_filter_input_key(key);
@@ -314,17 +340,20 @@ impl AppState {
         }
     }
 
-    /// Handle a key while the bottom-strip prompt is focused.
+    /// Handle a key while the editor form modal is focused.
     ///
-    /// Recognised keys:
-    /// - `Esc` — cancel the prompt; restore the underlying view.
-    /// - `Enter` — submit; returns `CreateRequested` or
-    ///   `UpdateValueRequested` depending on prompt mode.
-    /// - `Backspace` — pop one character from the buffer.
+    /// - `Tab` / `Shift+Tab` — cycle focus across the four fields.
+    /// - `Enter` — submit (validates; on failure leaves the form
+    ///   open and surfaces a sticky error toast).
+    /// - `Esc` — cancel.
     /// - `Ctrl+C` — quit (escape hatch).
-    /// - Any other printable character (no Ctrl modifier) — append to
-    ///   the buffer.
-    fn dispatch_prompt_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+    /// - On `Name` / `Value` focus: typed characters append, Backspace
+    ///   pops.
+    /// - On `Group` / `Kind` focus: Left / Right arrows + Space cycle
+    ///   the option.
+    /// - `s` on `Value` focus toggles secret-value masking (kept as
+    ///   typed but rendered with `*`).
+    fn dispatch_form_key(&mut self, key: KeyEvent) -> DispatchOutcome {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if matches!(key.code, KeyCode::Char('c')) && ctrl {
             self.quit = true;
@@ -332,80 +361,88 @@ impl AppState {
         }
         match key.code {
             KeyCode::Esc => {
-                self.prompt = None;
+                self.form = None;
                 DispatchOutcome::Continue
             }
-            KeyCode::Backspace => {
-                if let Some(prompt) = self.prompt.as_mut() {
-                    prompt.buffer.pop();
+            KeyCode::Enter => self.submit_form(),
+            KeyCode::Tab => {
+                if let Some(form) = self.form.as_mut() {
+                    form.focus = next_focus(form.focus, &form.mode);
                 }
                 DispatchOutcome::Continue
             }
-            KeyCode::Char(c) if !ctrl => {
-                if let Some(prompt) = self.prompt.as_mut() {
-                    prompt.buffer.push(c);
+            KeyCode::BackTab => {
+                if let Some(form) = self.form.as_mut() {
+                    form.focus = prev_focus(form.focus, &form.mode);
                 }
                 DispatchOutcome::Continue
             }
-            KeyCode::Enter => self.submit_prompt(),
-            _ => DispatchOutcome::Continue,
+            _ => {
+                if let Some(form) = self.form.as_mut() {
+                    handle_field_key(form, key);
+                }
+                DispatchOutcome::Continue
+            }
         }
     }
 
-    /// Validate the prompt buffer and emit the matching outcome.
-    /// On validation failure, surfaces a sticky error toast and
-    /// leaves the prompt open so the user can fix the input.
-    fn submit_prompt(&mut self) -> DispatchOutcome {
-        let Some(prompt) = self.prompt.take() else {
+    /// Validate the editor form's current contents and emit the
+    /// matching outcome. On validation failure, surfaces a sticky
+    /// error toast and leaves the form open with the entered data
+    /// preserved.
+    fn submit_form(&mut self) -> DispatchOutcome {
+        let Some(form) = self.form.take() else {
             return DispatchOutcome::Continue;
         };
-        match prompt.mode {
-            PromptMode::NewVar => {
-                let raw = prompt.buffer;
-                let Some((name, value)) = raw.split_once('=') else {
-                    self.set_error_toast("format: NAME=value (Esc to cancel)");
-                    // Restore the prompt with the buffer so the user
-                    // doesn't lose what they typed.
-                    self.prompt = Some(InputPrompt {
-                        mode: PromptMode::NewVar,
-                        buffer: raw,
-                        mask: false,
+        // Reach into the cycle slices to recover the typed options.
+        // Indices are bounded at construction + key handling, so
+        // out-of-range here is unreachable; we clamp defensively.
+        let group = GROUP_CYCLE
+            .get(form.group_idx.min(GROUP_CYCLE.len() - 1))
+            .cloned()
+            .unwrap_or(Group::User);
+        let kind = *KIND_CYCLE
+            .get(form.kind_idx.min(KIND_CYCLE.len() - 1))
+            .unwrap_or(&VarKind::Secret);
+
+        match form.mode.clone() {
+            EditorMode::NewVar => {
+                if form.name.trim().is_empty() {
+                    self.set_error_toast("name must be non-empty (Esc to cancel)");
+                    self.form = Some(EditorForm {
+                        focus: FormField::Name,
+                        ..form
                     });
                     return DispatchOutcome::Continue;
-                };
-                let name = name.trim().to_owned();
-                let value = value.to_owned();
-                if name.is_empty() || value.is_empty() {
-                    self.set_error_toast("name and value must be non-empty (Esc to cancel)");
-                    self.prompt = Some(InputPrompt {
-                        mode: PromptMode::NewVar,
-                        buffer: format!("{name}={value}"),
-                        mask: false,
+                }
+                if form.value.is_empty() {
+                    self.set_error_toast("value must be non-empty (Esc to cancel)");
+                    self.form = Some(EditorForm {
+                        focus: FormField::Value,
+                        ..form
                     });
                     return DispatchOutcome::Continue;
                 }
                 DispatchOutcome::CreateRequested(VarDraft {
-                    name,
-                    group: Group::User,
-                    kind: VarKind::Secret,
-                    value: SecretString::new(value.into()),
+                    name: form.name.trim().to_owned(),
+                    group,
+                    kind,
+                    value: SecretString::new(form.value.into()),
                 })
             }
-            PromptMode::EditValue { id, name } => {
-                let value = prompt.buffer;
-                if value.is_empty() {
+            EditorMode::EditValue { id, original_name } => {
+                if form.value.is_empty() {
                     self.set_error_toast("value must be non-empty (Esc to cancel)");
-                    self.prompt = Some(InputPrompt {
-                        mode: PromptMode::EditValue { id, name },
-                        buffer: value,
-                        mask: true,
+                    self.form = Some(EditorForm {
+                        focus: FormField::Value,
+                        ..form
                     });
                     return DispatchOutcome::Continue;
                 }
                 DispatchOutcome::UpdateValueRequested {
                     id,
-                    value: SecretString::new(value.into()),
-                    name,
+                    value: SecretString::new(form.value.into()),
+                    name: original_name,
                 }
             }
         }
@@ -634,19 +671,24 @@ impl AppState {
         }
     }
 
-    /// Open the bottom-strip prompt for creating a new variable.
-    /// The user types `NAME=value` and presses Enter to submit.
+    /// Open the editor form modal for creating a new variable.
+    /// Fields default to: empty name + empty value, group=user,
+    /// kind=secret (matches the most common case).
     fn open_new_var_prompt(&mut self) {
-        self.prompt = Some(InputPrompt {
-            mode: PromptMode::NewVar,
-            buffer: String::new(),
-            mask: false,
+        self.form = Some(EditorForm {
+            mode: EditorMode::NewVar,
+            name: String::new(),
+            value: String::new(),
+            group_idx: 0,
+            kind_idx: 0,
+            focus: FormField::Name,
+            show_value: false,
         });
     }
 
-    /// Open the bottom-strip prompt for editing the value of the
-    /// currently-targeted variable. Surfaces an info toast if there
-    /// is no row selected (without clobbering a sticky error toast).
+    /// Open the editor form modal for editing the value of the
+    /// currently-targeted variable. The name / group / kind fields
+    /// are displayed but read-only; only the value is editable.
     fn open_edit_value_prompt(&mut self) {
         let target = match self.view {
             View::Dashboard => self.selected_row(),
@@ -658,25 +700,34 @@ impl AppState {
             }
             return;
         };
-        self.prompt = Some(InputPrompt {
-            mode: PromptMode::EditValue {
+        let group_idx = GROUP_CYCLE
+            .iter()
+            .position(|g| g == &var.group)
+            .unwrap_or(0);
+        let kind_idx = KIND_CYCLE.iter().position(|k| *k == var.kind).unwrap_or(0);
+        self.form = Some(EditorForm {
+            mode: EditorMode::EditValue {
                 id: var.id,
-                name: var.name.clone(),
+                original_name: var.name.clone(),
             },
-            buffer: String::new(),
-            mask: matches!(var.kind, VarKind::Secret),
+            name: var.name.clone(),
+            value: String::new(),
+            group_idx,
+            kind_idx,
+            focus: FormField::Value,
+            show_value: !matches!(var.kind, VarKind::Secret),
         });
     }
 
-    /// Whether the bottom-strip input prompt is currently focused.
+    /// Whether the editor form modal is currently focused.
     #[must_use]
-    pub const fn is_prompt_visible(&self) -> bool {
-        self.prompt.is_some()
+    pub const fn is_form_visible(&self) -> bool {
+        self.form.is_some()
     }
 
-    /// Read-only access to the focused prompt (for the views layer).
-    pub(crate) const fn current_prompt(&self) -> Option<&InputPrompt> {
-        self.prompt.as_ref()
+    /// Read-only access to the focused editor form (for the views layer).
+    pub(crate) const fn current_form(&self) -> Option<&EditorForm> {
+        self.form.as_ref()
     }
 
     /// Raise a confirmation modal for deleting the currently-targeted
@@ -1038,6 +1089,100 @@ impl AppState {
         };
         self.table_state.select(Some(new));
     }
+}
+
+/// Return the next field in the editor form's focus cycle. In
+/// `EditValue` mode the Name / Group / Kind fields are display-only
+/// so focus stays on `Value`.
+const fn next_focus(current: FormField, mode: &EditorMode) -> FormField {
+    if matches!(mode, EditorMode::EditValue { .. }) {
+        return FormField::Value;
+    }
+    match current {
+        FormField::Name => FormField::Group,
+        FormField::Group => FormField::Kind,
+        FormField::Kind => FormField::Value,
+        FormField::Value => FormField::Name,
+    }
+}
+
+/// Return the previous field in the editor form's focus cycle.
+const fn prev_focus(current: FormField, mode: &EditorMode) -> FormField {
+    if matches!(mode, EditorMode::EditValue { .. }) {
+        return FormField::Value;
+    }
+    match current {
+        FormField::Name => FormField::Value,
+        FormField::Group => FormField::Name,
+        FormField::Kind => FormField::Group,
+        FormField::Value => FormField::Kind,
+    }
+}
+
+/// Apply a non-Tab / non-Esc / non-Enter / non-Ctrl-C key to the
+/// currently-focused field of the editor form.
+fn handle_field_key(form: &mut EditorForm, key: KeyEvent) {
+    let read_only_metadata = matches!(form.mode, EditorMode::EditValue { .. });
+    match form.focus {
+        FormField::Name => {
+            if read_only_metadata {
+                return;
+            }
+            match key.code {
+                KeyCode::Backspace => {
+                    form.name.pop();
+                }
+                KeyCode::Char(c) if is_text_input(key) => form.name.push(c),
+                _ => {}
+            }
+        }
+        FormField::Group => {
+            if read_only_metadata {
+                return;
+            }
+            match key.code {
+                KeyCode::Left => {
+                    form.group_idx = (form.group_idx + GROUP_CYCLE.len() - 1) % GROUP_CYCLE.len();
+                }
+                KeyCode::Right | KeyCode::Char(' ') => {
+                    form.group_idx = (form.group_idx + 1) % GROUP_CYCLE.len();
+                }
+                _ => {}
+            }
+        }
+        FormField::Kind => {
+            if read_only_metadata {
+                return;
+            }
+            match key.code {
+                KeyCode::Left => {
+                    form.kind_idx = (form.kind_idx + KIND_CYCLE.len() - 1) % KIND_CYCLE.len();
+                }
+                KeyCode::Right | KeyCode::Char(' ') => {
+                    form.kind_idx = (form.kind_idx + 1) % KIND_CYCLE.len();
+                }
+                _ => {}
+            }
+        }
+        FormField::Value => match key.code {
+            KeyCode::Backspace => {
+                form.value.pop();
+            }
+            // `Ctrl+S` toggles "show value" so the user can verify what
+            // they typed.
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                form.show_value = !form.show_value;
+            }
+            KeyCode::Char(c) if is_text_input(key) => form.value.push(c),
+            _ => {}
+        },
+    }
+}
+
+/// Whether a key event represents a typeable character (no Ctrl /
+/// Alt modifier; Shift is OK).
+const fn is_text_input(key: KeyEvent) -> bool {
+    !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
 #[cfg(test)]
