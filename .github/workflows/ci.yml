@@ -8,6 +8,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pin the toolchain explicitly via env so rustup's cargo proxy does
+  # NOT re-resolve `rust-toolchain.toml` on every `cargo` invocation.
+  # That re-resolution is what triggers the flaky
+  # `cargo→rustup-init` symptom on macos-latest runners: the proxy
+  # decides the toolchain needs a touch-up, and during the touch-up
+  # the cargo proxy itself ends up pointing at `rustup-init`.
+  # `RUSTUP_TOOLCHAIN` short-circuits the lookup with no file read.
+  RUSTUP_TOOLCHAIN: "1.94"
 
 jobs:
   assert-no-openspec:
@@ -82,12 +90,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94"
-      - uses: Swatinem/rust-cache@v2
-      # Same flaky-cargo-proxy guard as the clippy job. See its
-      # `Sanity check toolchain` step for the rationale.
+      # No `Swatinem/rust-cache` here. The test job builds everything
+      # with `--all-features` which pulls in the SQLCipher build chain
+      # (perl + OpenSSL); the cache for that combination has been
+      # observed to interact badly with the rustup toolchain
+      # re-resolution on macos-latest, manifesting as `cargo test`
+      # invoking `rustup-init` with an "unexpected argument" error.
+      # Dropping the cache costs a few minutes per CI run and buys
+      # reliable test execution on the macOS leg.
       - name: Sanity check toolchain
         run: |
-          rustup default 1.94
           cargo --version
           rustc --version
       - name: Install Linux deps (Secret Service for keyring)

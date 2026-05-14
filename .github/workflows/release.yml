@@ -12,6 +12,11 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
+  # Pin the toolchain explicitly via env so rustup's cargo proxy does
+  # NOT re-resolve `rust-toolchain.toml` on every `cargo` invocation.
+  # See the matching comment in `.github/workflows/ci.yml` for the
+  # cargo→rustup-init failure mode this guards against.
+  RUSTUP_TOOLCHAIN: "1.94"
 
 jobs:
   # Re-run the same gates the CI workflow runs on a tag so a green
