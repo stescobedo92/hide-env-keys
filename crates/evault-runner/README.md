@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-runner.svg)](https://crates.io/crates/evault-runner)
 [![docs.rs](https://docs.rs/evault-runner/badge.svg)](https://docs.rs/evault-runner)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > Child-process runner that satisfies [`evault-core`](https://crates.io/crates/evault-core)'s `ProcessRunner` trait — spawns commands with an injected environment overlay, no `.env` on disk.
 
@@ -50,8 +50,8 @@ The child inherits stdin, stdout, and stderr from the parent, so interactive pro
 
 ## Part of the evault workspace
 
-Used by [evault](https://github.com/stescobedo/hide-env-keys)'s `evault run` subcommand and by the TUI's `R` (run in project) flow. See the workspace README for the broader pipeline.
+Used by [evault](https://github.com/stescobedo92/hide-env-keys)'s `evault run` subcommand and by the TUI's `R` (run in project) flow. See the workspace README for the broader pipeline.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

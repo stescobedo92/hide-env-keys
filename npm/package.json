@@ -16,13 +16,13 @@
     "secret-service",
     "sqlcipher"
   ],
-  "homepage": "https://github.com/stescobedo/hide-env-keys",
+  "homepage": "https://github.com/stescobedo92/hide-env-keys",
   "bugs": {
-    "url": "https://github.com/stescobedo/hide-env-keys/issues"
+    "url": "https://github.com/stescobedo92/hide-env-keys/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stescobedo/hide-env-keys.git"
+    "url": "git+https://github.com/stescobedo92/hide-env-keys.git"
   },
   "license": "MIT",
   "author": "Sergio Triana Escobedo <stescobedo.31@gmail.com>",

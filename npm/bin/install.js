@@ -18,7 +18,7 @@ const os = require("os");
 
 const pkg = require("../package.json");
 const VERSION = pkg.version;
-const REPO = "stescobedo/hide-env-keys";
+const REPO = "stescobedo92/hide-env-keys";
 
 // Map (platform, arch) → (cargo target triple, archive ext, binary name).
 const TARGETS = {

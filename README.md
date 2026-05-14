@@ -7,20 +7,20 @@
 </p>
 
 <p align="center">
-  <a href="https://stescobedo.github.io/hide-env-keys/"><strong>Documentation</strong></a>
+  <a href="https://stescobedo92.github.io/hide-env-keys/"><strong>Documentation</strong></a>
   ·
   <a href="https://crates.io/crates/evault-cli">crates.io</a>
   ·
   <a href="https://www.npmjs.com/package/evault-cli">npm</a>
   ·
-  <a href="https://github.com/stescobedo/hide-env-keys/releases">Releases</a>
+  <a href="https://github.com/stescobedo92/hide-env-keys/releases">Releases</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/stescobedo/hide-env-keys/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/stescobedo/hide-env-keys/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/stescobedo92/hide-env-keys/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/stescobedo92/hide-env-keys/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://crates.io/crates/evault-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/evault-cli.svg?logo=rust" /></a>
   <a href="https://www.npmjs.com/package/evault-cli"><img alt="npm" src="https://img.shields.io/npm/v/evault-cli.svg?logo=npm" /></a>
-  <a href="https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+  <a href="https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
 </p>
 
 ---
@@ -31,7 +31,7 @@
 
 ### Pre-built binaries
 
-Tagged releases publish per-platform binaries to [GitHub Releases](https://github.com/stescobedo/hide-env-keys/releases). Each archive contains the `evault` binary plus `README.md` and `LICENSE`; each archive also has a sibling `.sha256` for integrity verification.
+Tagged releases publish per-platform binaries to [GitHub Releases](https://github.com/stescobedo92/hide-env-keys/releases). Each archive contains the `evault` binary plus `README.md` and `LICENSE`; each archive also has a sibling `.sha256` for integrity verification.
 
 Available targets:
 
@@ -47,7 +47,7 @@ Available targets:
 Requires Rust 1.94+ (workspace toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` will pick it up automatically).
 
 ```bash
-git clone https://github.com/stescobedo/hide-env-keys
+git clone https://github.com/stescobedo92/hide-env-keys
 cd hide-env-keys
 cargo install --path crates/evault-cli
 ```

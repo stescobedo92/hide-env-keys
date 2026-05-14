@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-materializer.svg)](https://crates.io/crates/evault-materializer)
 [![docs.rs](https://docs.rs/evault-materializer/badge.svg)](https://docs.rs/evault-materializer)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > `.env` file generator that satisfies [`evault-core`](https://crates.io/crates/evault-core)'s `Materializer` trait — atomic writes, a "do not edit" header, and automatic `.gitignore` management.
 
@@ -50,8 +50,8 @@ After this runs, `<dir>/.gitignore` exists (or has been updated) so that `git st
 
 ## Part of the evault workspace
 
-Used by [evault](https://github.com/stescobedo/hide-env-keys)'s `evault gen` subcommand and by the TUI link form when "materialize" is checked. See the workspace README for the broader pipeline.
+Used by [evault](https://github.com/stescobedo92/hide-env-keys)'s `evault gen` subcommand and by the TUI link form when "materialize" is checked. See the workspace README for the broader pipeline.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

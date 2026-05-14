@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-scanner-regex.svg)](https://crates.io/crates/evault-scanner-regex)
 [![docs.rs](https://docs.rs/evault-scanner-regex/badge.svg)](https://docs.rs/evault-scanner-regex)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > Source-code scanner that finds environment-variable references via a per-language regex bank — implements [`evault-core`](https://crates.io/crates/evault-core)'s `CodeScanner` trait.
 
@@ -53,8 +53,8 @@ assert!(names.contains(&"API_KEY"));
 
 ## Part of the evault workspace
 
-Powers [evault](https://github.com/stescobedo/hide-env-keys)'s `evault scan ./path` subcommand, which classifies each name as `ORPHAN` (in code, not registry), `UNUSED` (in registry, not code), or `REFERENCED` (in both).
+Powers [evault](https://github.com/stescobedo92/hide-env-keys)'s `evault scan ./path` subcommand, which classifies each name as `ORPHAN` (in code, not registry), `UNUSED` (in registry, not code), or `REFERENCED` (in both).
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

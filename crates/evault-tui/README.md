@@ -2,9 +2,9 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-tui.svg)](https://crates.io/crates/evault-tui)
 [![docs.rs](https://docs.rs/evault-tui/badge.svg)](https://docs.rs/evault-tui)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
-> Terminal user interface for [evault](https://github.com/stescobedo/hide-env-keys), built on [ratatui](https://crates.io/crates/ratatui). Plug any backend that implements `VarProvider + VarMutator` and get a full dashboard with CRUD, link-to-project, view-value, fuzzy filter, and run-in-project flows.
+> Terminal user interface for [evault](https://github.com/stescobedo92/hide-env-keys), built on [ratatui](https://crates.io/crates/ratatui). Plug any backend that implements `VarProvider + VarMutator` and get a full dashboard with CRUD, link-to-project, view-value, fuzzy filter, and run-in-project flows.
 
 The crate is intentionally decoupled from any storage layer: the TUI reads rows from a caller-supplied [`VarProvider`] and writes through [`VarMutator`]. The same TUI can drive a SQLCipher-backed registry, an in-memory test stub, or a remote facade.
 
@@ -83,4 +83,4 @@ Used by the [`evault` CLI](https://crates.io/crates/evault-cli) as the default a
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

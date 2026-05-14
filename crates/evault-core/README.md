@@ -2,9 +2,9 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-core.svg)](https://crates.io/crates/evault-core)
 [![docs.rs](https://docs.rs/evault-core/badge.svg)](https://docs.rs/evault-core)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
-> Core domain model, trait contracts, and services for the [evault](https://github.com/stescobedo/hide-env-keys) workspace.
+> Core domain model, trait contracts, and services for the [evault](https://github.com/stescobedo92/hide-env-keys) workspace.
 
 This crate is intentionally **backend-agnostic**. It defines the types and traits that every concrete storage / manifest / runner implementation in the workspace must satisfy. Business logic (services like `RegistryService`) is generic over those traits, so tests can wire in-memory stubs and production code can wire SQLCipher + the OS keyring without any service-layer change.
 
@@ -65,8 +65,8 @@ assert!(Var::validate_name("1BAD").is_err()); // must start with letter or `_`
 
 ## Part of the evault workspace
 
-This crate is the foundation of [evault](https://github.com/stescobedo/hide-env-keys), a secure cross-platform TUI + CLI for managing environment variables. See the workspace README for the full picture, including the SQLCipher metadata store, OS keyring secret store, TOML manifest format, and the `evault` CLI.
+This crate is the foundation of [evault](https://github.com/stescobedo92/hide-env-keys), a secure cross-platform TUI + CLI for managing environment variables. See the workspace README for the full picture, including the SQLCipher metadata store, OS keyring secret store, TOML manifest format, and the `evault` CLI.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

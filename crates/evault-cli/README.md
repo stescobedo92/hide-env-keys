@@ -2,9 +2,9 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-cli.svg)](https://crates.io/crates/evault-cli)
 [![docs.rs](https://docs.rs/evault-cli/badge.svg)](https://docs.rs/evault-cli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
-> Cross-platform CLI binary for [evault](https://github.com/stescobedo/hide-env-keys) — secure management of environment variables with secrets in the OS keyring and metadata in a local (optionally encrypted) SQLite database.
+> Cross-platform CLI binary for [evault](https://github.com/stescobedo92/hide-env-keys) — secure management of environment variables with secrets in the OS keyring and metadata in a local (optionally encrypted) SQLite database.
 
 The binary is `evault`. Run it without arguments to launch the interactive TUI; pass a subcommand to operate non-interactively for scripts and CI.
 
@@ -14,7 +14,7 @@ The binary is `evault`. Run it without arguments to launch the interactive TUI; 
 cargo install evault-cli
 ```
 
-Or grab a pre-built binary from the [GitHub Releases](https://github.com/stescobedo/hide-env-keys/releases) page.
+Or grab a pre-built binary from the [GitHub Releases](https://github.com/stescobedo92/hide-env-keys/releases) page.
 
 On first run, `evault` generates a fresh 256-bit master key, stores it in your OS keyring under the service `evault`, and creates a metadata database at:
 
@@ -70,8 +70,8 @@ evault          # next run generates a fresh DB + master key
 
 ## Documentation
 
-Full documentation, TUI keymap, and architecture overview are in the [workspace README](https://github.com/stescobedo/hide-env-keys/blob/master/README.md).
+Full documentation, TUI keymap, and architecture overview are in the [workspace README](https://github.com/stescobedo92/hide-env-keys/blob/master/README.md).
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

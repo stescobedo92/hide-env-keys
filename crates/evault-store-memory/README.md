@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-store-memory.svg)](https://crates.io/crates/evault-store-memory)
 [![docs.rs](https://docs.rs/evault-store-memory/badge.svg)](https://docs.rs/evault-store-memory)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > In-memory implementations of [`evault-core`](https://crates.io/crates/evault-core)'s storage traits — fixtures for tests, reference implementations for the trait contracts.
 
@@ -64,8 +64,8 @@ let registry = RegistryService::with_defaults(
 
 ## Part of the evault workspace
 
-This crate is part of [evault](https://github.com/stescobedo/hide-env-keys). Production deployments use [`evault-store-sqlcipher`](https://crates.io/crates/evault-store-sqlcipher) for metadata and [`evault-store-keyring`](https://crates.io/crates/evault-store-keyring) for secrets.
+This crate is part of [evault](https://github.com/stescobedo92/hide-env-keys). Production deployments use [`evault-store-sqlcipher`](https://crates.io/crates/evault-store-sqlcipher) for metadata and [`evault-store-keyring`](https://crates.io/crates/evault-store-keyring) for secrets.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

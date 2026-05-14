@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-store-keyring.svg)](https://crates.io/crates/evault-store-keyring)
 [![docs.rs](https://docs.rs/evault-store-keyring/badge.svg)](https://docs.rs/evault-store-keyring)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > OS-keyring–backed implementation of [`evault-core`](https://crates.io/crates/evault-core)'s `SecretStore` trait — wraps `keyring-core` to satisfy the trait contract on Windows, macOS, and Linux.
 
@@ -57,8 +57,8 @@ The integration tests in this crate demonstrate the "skip if unavailable" patter
 
 ## Part of the evault workspace
 
-This is the production secret-store implementation used by [evault](https://github.com/stescobedo/hide-env-keys). See the workspace README for how it fits with the SQLCipher metadata store and the TUI.
+This is the production secret-store implementation used by [evault](https://github.com/stescobedo92/hide-env-keys). See the workspace README for how it fits with the SQLCipher metadata store and the TUI.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

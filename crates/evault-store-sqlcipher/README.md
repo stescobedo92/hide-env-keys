@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-store-sqlcipher.svg)](https://crates.io/crates/evault-store-sqlcipher)
 [![docs.rs](https://docs.rs/evault-store-sqlcipher/badge.svg)](https://docs.rs/evault-store-sqlcipher)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > SQLite-backed implementation of [`evault-core`](https://crates.io/crates/evault-core)'s `MetadataStore` trait, with optional [SQLCipher](https://www.zetetic.net/sqlcipher/) encryption.
 
@@ -56,8 +56,8 @@ The database is versioned via SQLite's `user_version` pragma. Migrations run ins
 
 ## Part of the evault workspace
 
-This is the production metadata store for [evault](https://github.com/stescobedo/hide-env-keys). The companion `evault-store-keyring` crate handles secret values.
+This is the production metadata store for [evault](https://github.com/stescobedo92/hide-env-keys). The companion `evault-store-keyring` crate handles secret values.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

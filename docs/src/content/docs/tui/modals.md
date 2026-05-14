@@ -74,4 +74,4 @@ Only `Enter`, `Esc`, and `Ctrl+C` are recognised while the error modal is focuse
 
 ## Help overlay
 
-`?` opens a centered overlay listing every binding. The two tables (this overlay and the persistent keybindings hint bar at the bottom of the dashboard) are maintained by hand and kept in sync with the keymap in [`crate::event::Action::from_key`](https://github.com/stescobedo/hide-env-keys/blob/master/crates/evault-tui/src/event.rs).
+`?` opens a centered overlay listing every binding. The two tables (this overlay and the persistent keybindings hint bar at the bottom of the dashboard) are maintained by hand and kept in sync with the keymap in [`crate::event::Action::from_key`](https://github.com/stescobedo92/hide-env-keys/blob/master/crates/evault-tui/src/event.rs).

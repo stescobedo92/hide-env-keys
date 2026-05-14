@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/evault-manifest.svg)](https://crates.io/crates/evault-manifest)
 [![docs.rs](https://docs.rs/evault-manifest/badge.svg)](https://docs.rs/evault-manifest)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)
 
 > Parser and serializer for the `evault.toml` project manifest. Implements [`evault-core`](https://crates.io/crates/evault-core)'s `ManifestIo` trait by reading and writing TOML files on disk.
 
@@ -71,8 +71,8 @@ assert_eq!(loaded.bindings[0].key, "NODE_ENV");
 
 ## Part of the evault workspace
 
-Used by [evault](https://github.com/stescobedo/hide-env-keys)'s `link` / `gen` / `run` flows to read and write per-project manifests. See the workspace README for the broader architecture.
+Used by [evault](https://github.com/stescobedo92/hide-env-keys)'s `link` / `gen` / `run` flows to read and write per-project manifests. See the workspace README for the broader architecture.
 
 ## License
 
-[MIT](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
+[MIT](https://github.com/stescobedo92/hide-env-keys/blob/master/LICENSE)

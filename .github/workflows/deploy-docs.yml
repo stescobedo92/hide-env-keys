@@ -44,9 +44,9 @@ jobs:
     permissions:
       contents: read
     # Skip on forks so a fork's automated push does not try to deploy
-    # to the upstream's Pages and 403. Replace `stescobedo/hide-env-keys`
+    # to the upstream's Pages and 403. Replace `stescobedo92/hide-env-keys`
     # if you fork this workflow.
-    if: github.repository == 'stescobedo/hide-env-keys'
+    if: github.repository == 'stescobedo92/hide-env-keys'
     runs-on: ubuntu-latest
     defaults:
       run:

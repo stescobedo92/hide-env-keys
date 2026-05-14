@@ -1,7 +1,7 @@
 # evault — documentation site
 
 This directory is the Astro + Starlight source for the docs published at
-**https://stescobedo.github.io/hide-env-keys/**.
+**https://stescobedo92.github.io/hide-env-keys/**.
 
 It is deployed automatically by [`.github/workflows/deploy-docs.yml`](../.github/workflows/deploy-docs.yml) on every push to `master` that touches `docs/**`, on every published release, or on a manual `workflow_dispatch`.
 

@@ -7,7 +7,7 @@ import starlight from "@astrojs/starlight";
 // every asset and link gets a 404. The repo name is "hide-env-keys", so
 // the base is "/hide-env-keys/". If you fork this under a different
 // repo name, change both values together.
-const SITE = "https://stescobedo.github.io";
+const SITE = "https://stescobedo92.github.io";
 const BASE = "/hide-env-keys";
 
 export default defineConfig({
@@ -30,13 +30,13 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/stescobedo/hide-env-keys",
+          href: "https://github.com/stescobedo92/hide-env-keys",
         },
       ],
       // Edit-this-page link in every doc.
       editLink: {
         baseUrl:
-          "https://github.com/stescobedo/hide-env-keys/edit/master/docs/",
+          "https://github.com/stescobedo92/hide-env-keys/edit/master/docs/",
       },
       // Add a "Last updated" footer per page using the file's git mtime.
       lastUpdated: true,

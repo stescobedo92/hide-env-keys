@@ -7,7 +7,7 @@ description: Get evault on your machine — pre-built binary, cargo install, or 
 
 ## Pre-built binary
 
-Tagged releases publish per-platform binaries to [GitHub Releases](https://github.com/stescobedo/hide-env-keys/releases). Each archive contains the `evault` binary plus `README.md` and `LICENSE`; each archive also has a sibling `.sha256` file for integrity verification.
+Tagged releases publish per-platform binaries to [GitHub Releases](https://github.com/stescobedo92/hide-env-keys/releases). Each archive contains the `evault` binary plus `README.md` and `LICENSE`; each archive also has a sibling `.sha256` file for integrity verification.
 
 | Platform | Archive |
 |---|---|
