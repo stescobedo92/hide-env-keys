@@ -28,6 +28,7 @@
 pub mod in_memory;
 pub mod link_helper;
 pub mod ops;
+pub mod run_helper;
 pub mod sqlcipher;
 
 pub use in_memory::InMemoryBackend;

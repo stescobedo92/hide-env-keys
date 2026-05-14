@@ -184,6 +184,16 @@ impl VarMutator for InMemoryBackend {
             materialize,
         )
     }
+
+    fn run_in_project(
+        &self,
+        project_path: PathBuf,
+        profile: String,
+        program: String,
+        args: Vec<String>,
+    ) -> Result<Option<i32>, ProviderError> {
+        super::run_helper::run_in_project(self, project_path, profile, program, args)
+    }
 }
 
 impl BackendOps for InMemoryBackend {

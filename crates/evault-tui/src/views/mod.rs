@@ -6,6 +6,7 @@ pub mod editor;
 pub mod error_modal;
 pub mod help;
 pub mod link_form;
+pub mod run_form;
 pub mod view_value;
 
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -83,6 +84,11 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     // Link form modal.
     if app.is_link_form_visible() {
         link_form::render(frame, centered(area, 60, 30), app, theme);
+    }
+
+    // Run-in-project form modal.
+    if app.is_run_form_visible() {
+        run_form::render(frame, centered(area, 60, 30), app, theme);
     }
 
     // View-value modal.

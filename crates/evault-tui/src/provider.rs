@@ -162,6 +162,35 @@ pub trait VarMutator: Send + Sync {
         profile: String,
         materialize: bool,
     ) -> Result<(), ProviderError>;
+
+    /// Spawn a child process with the project's resolved environment
+    /// overlay injected — equivalent of `evault run --project PATH
+    /// [--profile P] -- CMD [ARGS...]` triggered from the TUI.
+    ///
+    /// The implementation loads `<project_path>/evault.toml`, resolves
+    /// every binding for `profile` (secrets via the secret store,
+    /// inline literals straight from the manifest), and spawns
+    /// `program` with `args` inheriting the parent's stdio so the
+    /// user interacts with the child directly.
+    ///
+    /// **Terminal lifecycle is the caller's responsibility.** The TUI
+    /// runtime restores the terminal before invoking this method and
+    /// re-enters raw mode + alternate screen after it returns, so the
+    /// implementation may safely block on the child without corrupting
+    /// the parent's screen.
+    ///
+    /// Returns the child's exit code (`None` if killed by a signal).
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on missing manifest, value
+    /// resolution failure, invalid command, or spawn / I/O failure.
+    fn run_in_project(
+        &self,
+        project_path: std::path::PathBuf,
+        profile: String,
+        program: String,
+        args: Vec<String>,
+    ) -> Result<Option<i32>, ProviderError>;
 }
 
 /// A drafted variable awaiting backend creation.

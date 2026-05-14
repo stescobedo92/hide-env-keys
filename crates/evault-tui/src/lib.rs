@@ -77,6 +77,13 @@
 //!         _profile: String,
 //!         _materialize: bool,
 //!     ) -> Result<(), ProviderError> { Ok(()) }
+//!     fn run_in_project(
+//!         &self,
+//!         _project_path: PathBuf,
+//!         _profile: String,
+//!         _program: String,
+//!         _args: Vec<String>,
+//!     ) -> Result<Option<i32>, ProviderError> { Ok(Some(0)) }
 //! }
 //! run_tui(EmptyBackend).unwrap();
 //! ```

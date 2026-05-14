@@ -77,6 +77,13 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///         _profile: String,
 ///         _materialize: bool,
 ///     ) -> Result<(), ProviderError> { Ok(()) }
+///     fn run_in_project(
+///         &self,
+///         _project_path: PathBuf,
+///         _profile: String,
+///         _program: String,
+///         _args: Vec<String>,
+///     ) -> Result<Option<i32>, ProviderError> { Ok(Some(0)) }
 /// }
 ///
 /// run_tui(Empty).unwrap();
@@ -289,6 +296,75 @@ where
                         }
                     }
                 }
+                DispatchOutcome::RunRequested {
+                    project_path,
+                    profile,
+                    program,
+                    args,
+                } => {
+                    // The child process must inherit a NORMAL terminal
+                    // (no raw mode, no alternate screen). We tear the
+                    // TUI down, spawn synchronously, and re-init when
+                    // the child returns. `try_restore` failures are
+                    // surfaced — without them, the child would print
+                    // into the alternate buffer and never appear.
+                    if let Err(e) = ratatui::try_restore() {
+                        app.show_error_modal(
+                            "run failed",
+                            format!("could not restore the terminal before spawning: {e}"),
+                            None,
+                        );
+                        continue;
+                    }
+                    let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                        backend.run_in_project(
+                            project_path.clone(),
+                            profile.clone(),
+                            program.clone(),
+                            args.clone(),
+                        )
+                    }));
+                    // Re-enter raw mode + alternate screen regardless
+                    // of the outcome below. Failing to re-init leaves
+                    // the user stranded in a half-cooked terminal —
+                    // bail out hard so the panic-restore path runs.
+                    *terminal = ratatui::try_init().map_err(TuiError::Terminal)?;
+                    match outcome {
+                        Err(_) => {
+                            app.show_error_modal(
+                                "run failed",
+                                "backend panicked while running the command",
+                                Some(
+                                    "this is a bug in the backend; restart \
+                                     and report the issue if it persists."
+                                        .into(),
+                                ),
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            let msg = e.to_string();
+                            let hint = run_hint(&msg);
+                            app.show_error_modal("run failed", msg, hint);
+                        }
+                        Ok(Ok(code)) => {
+                            let cmd_repr = if args.is_empty() {
+                                program.clone()
+                            } else {
+                                format!("{program} {}", args.join(" "))
+                            };
+                            let msg = match code {
+                                Some(0) => format!("ran `{cmd_repr}` (exit 0)"),
+                                Some(c) => format!("ran `{cmd_repr}` (exit {c})"),
+                                None => format!("ran `{cmd_repr}` (killed by signal)"),
+                            };
+                            if let Err(e) = app.refresh(backend) {
+                                app.set_error_toast(format!("{msg} but refresh failed: {e}"));
+                            } else {
+                                app.set_info_toast(msg);
+                            }
+                        }
+                    }
+                }
                 DispatchOutcome::ViewValueRequested { id, name } => {
                     let result = panic::catch_unwind(AssertUnwindSafe(|| backend.get_value(id)));
                     match result {
@@ -430,6 +506,39 @@ fn update_hint(msg: &str) -> Option<String> {
         return Some(
             "The variable was deleted by another process before the \
              update could complete. Press r to refresh the dashboard."
+                .to_owned(),
+        );
+    }
+    None
+}
+
+/// Contextual hint for a failed `run_in_project` action.
+fn run_hint(msg: &str) -> Option<String> {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("manifest") || lower.contains("evault.toml") || lower.contains("no such file")
+    {
+        return Some(
+            "The project must have an evault.toml manifest before \
+             it can be run. Link a variable to the project first \
+             (press l on a row), or run `evault link` from the \
+             shell."
+                .to_owned(),
+        );
+    }
+    if lower.contains("program not found") || lower.contains("not found") {
+        return Some(
+            "The program was not found on PATH inside the project \
+             directory. Check the spelling, or use an absolute path \
+             (for example `./node_modules/.bin/jest` or \
+             `C:\\Program Files\\app\\app.exe`)."
+                .to_owned(),
+        );
+    }
+    if lower.contains("permission") {
+        return Some(
+            "The OS refused to spawn the program. On Unix, mark the \
+             file executable with `chmod +x`. On Windows, check that \
+             the file is not blocked by `Unblock-File`."
                 .to_owned(),
         );
     }

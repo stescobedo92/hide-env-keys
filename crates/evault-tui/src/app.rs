@@ -97,6 +97,9 @@ pub struct AppState {
     /// Link-to-project form (modal popup) currently focused. Same
     /// focus-stealing semantics as `form` above.
     link_form: Option<LinkForm>,
+    /// Run-in-project form (modal popup) currently focused. Captures
+    /// the project path, the profile, and the command line to spawn.
+    run_form: Option<RunForm>,
     /// Read-only view-value modal currently focused. Shows a
     /// variable's decrypted value; closed by Esc.
     view_value: Option<ViewValueModal>,
@@ -164,6 +167,20 @@ pub enum DispatchOutcome {
         id: VarId,
         /// Display name for the modal title.
         name: String,
+    },
+    /// The user submitted the run-in-project form. The runtime should
+    /// restore the terminal, call
+    /// [`crate::VarMutator::run_in_project`], and re-init the TUI
+    /// afterwards.
+    RunRequested {
+        /// Project path to load the manifest from.
+        project_path: std::path::PathBuf,
+        /// Profile to resolve bindings under.
+        profile: String,
+        /// Program to spawn.
+        program: String,
+        /// Arguments forwarded to the program.
+        args: Vec<String>,
     },
 }
 
@@ -258,6 +275,37 @@ pub(crate) enum LinkField {
     Materialize,
 }
 
+/// Run-in-project form — modal popup for the `R` flow.
+///
+/// Captures the project path, the profile name, and the command line
+/// (program + args) to spawn with the project's resolved environment
+/// overlay injected.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) struct RunForm {
+    /// Filesystem path the user has typed.
+    pub(crate) path: String,
+    /// Profile name (defaults to `default`).
+    pub(crate) profile: String,
+    /// Raw command line as typed by the user.
+    ///
+    /// Tokenised by whitespace at submit time. Quoted arguments are
+    /// NOT supported — users with complex shell quoting needs should
+    /// fall back to the `evault run` CLI command.
+    pub(crate) command: String,
+    /// Field currently focused.
+    pub(crate) focus: RunField,
+}
+
+/// Field currently focused inside [`RunForm`].
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunField {
+    Path,
+    Profile,
+    Command,
+}
+
 /// Error modal — focused popup that surfaces an action failure
 /// (failed create / edit / delete / link) with an explanatory hint.
 ///
@@ -345,6 +393,7 @@ impl AppState {
             confirm: None,
             form: None,
             link_form: None,
+            run_form: None,
             view_value: None,
             error_modal: None,
         }
@@ -435,6 +484,10 @@ impl AppState {
         // Link form: modal popup capturing path + profile + materialize.
         if self.link_form.is_some() {
             return self.dispatch_link_form_key(key);
+        }
+        // Run form: modal popup capturing path + profile + command line.
+        if self.run_form.is_some() {
+            return self.dispatch_run_form_key(key);
         }
         // Editor form: typed characters go to its fields.
         if self.form.is_some() {
@@ -658,6 +711,112 @@ impl AppState {
             profile,
             materialize: form.materialize,
         }
+    }
+
+    /// Handle a key while the run-in-project form modal is focused.
+    fn dispatch_run_form_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.run_form = None;
+                DispatchOutcome::Continue
+            }
+            KeyCode::Enter => self.submit_run_form(),
+            KeyCode::Tab => {
+                if let Some(form) = self.run_form.as_mut() {
+                    form.focus = match form.focus {
+                        RunField::Path => RunField::Profile,
+                        RunField::Profile => RunField::Command,
+                        RunField::Command => RunField::Path,
+                    };
+                }
+                DispatchOutcome::Continue
+            }
+            KeyCode::BackTab => {
+                if let Some(form) = self.run_form.as_mut() {
+                    form.focus = match form.focus {
+                        RunField::Path => RunField::Command,
+                        RunField::Profile => RunField::Path,
+                        RunField::Command => RunField::Profile,
+                    };
+                }
+                DispatchOutcome::Continue
+            }
+            _ => {
+                if let Some(form) = self.run_form.as_mut() {
+                    handle_run_field_key(form, key);
+                }
+                DispatchOutcome::Continue
+            }
+        }
+    }
+
+    /// Validate the form's contents and emit a [`DispatchOutcome::RunRequested`]
+    /// or — if validation fails — re-open the form with an info toast.
+    fn submit_run_form(&mut self) -> DispatchOutcome {
+        let Some(form) = self.run_form.take() else {
+            return DispatchOutcome::Continue;
+        };
+        let path = form.path.trim();
+        if path.is_empty() {
+            self.set_error_toast("project path must be non-empty (Esc to cancel)");
+            self.run_form = Some(RunForm {
+                focus: RunField::Path,
+                ..form
+            });
+            return DispatchOutcome::Continue;
+        }
+        let command_trim = form.command.trim();
+        if command_trim.is_empty() {
+            self.set_error_toast("command line must be non-empty (Esc to cancel)");
+            self.run_form = Some(RunForm {
+                focus: RunField::Command,
+                ..form
+            });
+            return DispatchOutcome::Continue;
+        }
+        let mut tokens = command_trim.split_whitespace();
+        // `command_trim` is non-empty, so the first token exists.
+        let program = tokens.next().unwrap_or("").to_owned();
+        let args: Vec<String> = tokens.map(str::to_owned).collect();
+        let profile = if form.profile.trim().is_empty() {
+            "default".to_owned()
+        } else {
+            form.profile.trim().to_owned()
+        };
+        DispatchOutcome::RunRequested {
+            project_path: std::path::PathBuf::from(path),
+            profile,
+            program,
+            args,
+        }
+    }
+
+    /// Open the run-in-project form modal. Unlike the link form, the
+    /// run form is per-project rather than per-var, so no row needs to
+    /// be selected — the user types the project path explicitly.
+    fn open_run_form(&mut self) {
+        self.run_form = Some(RunForm {
+            path: String::new(),
+            profile: "default".to_owned(),
+            command: String::new(),
+            focus: RunField::Path,
+        });
+    }
+
+    /// Whether the run-in-project form modal is currently focused.
+    #[must_use]
+    pub const fn is_run_form_visible(&self) -> bool {
+        self.run_form.is_some()
+    }
+
+    /// Read-only access to the focused run-form (for the views layer).
+    pub(crate) const fn current_run_form(&self) -> Option<&RunForm> {
+        self.run_form.as_ref()
     }
 
     /// Open the link-form modal for the currently-targeted variable.
@@ -900,6 +1059,7 @@ impl AppState {
             Action::NewVar => self.open_new_var_prompt(),
             Action::EditVar => self.open_edit_value_prompt(),
             Action::LinkVar => self.open_link_form(),
+            Action::RunInProject => self.open_run_form(),
             // `ViewValue` is handled in `dispatch_key` directly
             // because its outcome needs to leave the apply path. We
             // accept it here as a no-op for tests that bypass
@@ -1533,6 +1693,22 @@ fn handle_link_field_key(form: &mut LinkForm, key: KeyEvent) {
             }
             _ => {}
         },
+    }
+}
+
+/// Apply a key to the currently-focused field of the run form.
+fn handle_run_field_key(form: &mut RunForm, key: KeyEvent) {
+    let target = match form.focus {
+        RunField::Path => &mut form.path,
+        RunField::Profile => &mut form.profile,
+        RunField::Command => &mut form.command,
+    };
+    match key.code {
+        KeyCode::Backspace => {
+            target.pop();
+        }
+        KeyCode::Char(c) if is_text_input(key) => target.push(c),
+        _ => {}
     }
 }
 

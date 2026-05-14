@@ -54,10 +54,10 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
         Pair("Ctrl+F", "fuzzy filter"),
         Pair("s", "mask/show secrets"),
         Pair("r", "refresh"),
+        Pair("R", "run in project"),
         Pair("?", "help overlay"),
         Pair("Esc", "back / dismiss"),
         Pair("q", "quit"),
-        Pair("Ctrl+C", "quit"),
     ];
 
     render_aligned(frame, area, &row1, &row2, theme);

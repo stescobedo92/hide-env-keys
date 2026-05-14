@@ -35,6 +35,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, theme: &Theme) {
         ("p", "switch profile"),
         ("Tab", "next view"),
         ("r", "refresh"),
+        ("R", "run command in project (injects env)"),
         ("?", "toggle this help"),
         ("Esc", "dismiss toast / overlay (or quit)"),
         ("q", "quit"),

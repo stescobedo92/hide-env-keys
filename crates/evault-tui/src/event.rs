@@ -48,6 +48,8 @@ pub enum Action {
     ViewValue,
     /// Toggle showing / masking secret values.
     ToggleSecretVisibility,
+    /// Open the run-in-project form.
+    RunInProject,
     /// Open the fuzzy-search overlay.
     StartFuzzy,
     /// Switch the active profile.
@@ -106,6 +108,10 @@ impl Action {
             KeyCode::Char('y') => Self::CopyValue,
             KeyCode::Char('v') => Self::ViewValue,
             KeyCode::Char('s') => Self::ToggleSecretVisibility,
+            // Shift-R = "Run in project" (lower-case `r` is bound to
+            // Refresh; capitalising it follows the `g`/`G` precedent
+            // for related-but-distinct actions).
+            KeyCode::Char('R') => Self::RunInProject,
             KeyCode::Char('f') if ctrl => Self::StartFuzzy,
             KeyCode::Char('p') => Self::SwitchProfile,
             KeyCode::Tab => Self::NextView,
@@ -177,6 +183,18 @@ mod tests {
         assert_eq!(Action::from_key(ctrl_c), Action::Quit);
         // Plain 'c' is still unbound.
         assert_eq!(Action::from_key(press(KeyCode::Char('c'))), Action::Noop);
+    }
+
+    #[test]
+    fn shift_r_is_run_in_project_lowercase_r_is_refresh() {
+        // The two are deliberately separate actions: `r` refreshes
+        // the dashboard, `R` launches a child process with the
+        // project's env overlay.
+        assert_eq!(Action::from_key(press(KeyCode::Char('r'))), Action::Refresh);
+        assert_eq!(
+            Action::from_key(press(KeyCode::Char('R'))),
+            Action::RunInProject
+        );
     }
 
     #[test]
