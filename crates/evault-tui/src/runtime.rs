@@ -201,6 +201,62 @@ where
                         }
                     }
                 }
+                DispatchOutcome::LinkRequested {
+                    id,
+                    name,
+                    project_path,
+                    profile,
+                    materialize,
+                } => {
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                        backend.link_to_project(
+                            id,
+                            name.clone(),
+                            project_path.clone(),
+                            profile.clone(),
+                            materialize,
+                        )
+                    }));
+                    match result {
+                        Err(_) => {
+                            app.set_error_toast("link crashed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("link failed: {e}"));
+                        }
+                        Ok(Ok(())) => {
+                            let suffix = if materialize { " + .env" } else { "" };
+                            if let Err(e) = app.refresh(backend) {
+                                app.set_error_toast(format!(
+                                    "linked `{name}` to {}{suffix} but refresh failed: {e}",
+                                    project_path.display()
+                                ));
+                            } else {
+                                app.set_info_toast(format!(
+                                    "linked `{name}` to {}{suffix}",
+                                    project_path.display()
+                                ));
+                            }
+                        }
+                    }
+                }
+                DispatchOutcome::ViewValueRequested { id, name } => {
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| backend.get_value(id)));
+                    match result {
+                        Err(_) => {
+                            app.set_error_toast("view value crashed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("view value failed: {e}"));
+                        }
+                        Ok(Ok(None)) => {
+                            app.set_error_toast(format!("value missing for `{name}`"));
+                        }
+                        Ok(Ok(Some(value))) => {
+                            app.show_value_modal(name, value);
+                        }
+                    }
+                }
                 DispatchOutcome::DeleteRequested { id, name } => {
                     // Side-effect at the runtime boundary that owns
                     // the backend. We guard against three failure

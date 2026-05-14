@@ -69,6 +69,17 @@ pub trait VarProvider: Send + Sync {
     /// Returns [`ProviderError`] if the backend is unreachable or
     /// returns an error. The TUI surfaces the message as a toast.
     fn list(&self) -> Result<Vec<VarSummary>, ProviderError>;
+
+    /// Resolve the actual (decrypted) value of a variable.
+    ///
+    /// Used by the `v` key in the TUI to surface the value inside a
+    /// view-value modal. Returns `None` if the variable's metadata
+    /// exists but its value is missing in the secret tier (rare —
+    /// usually indicates external tampering).
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on storage failure.
+    fn get_value(&self, id: VarId) -> Result<Option<SecretString>, ProviderError>;
 }
 
 /// Write-side counterpart to [`VarProvider`].
@@ -124,6 +135,33 @@ pub trait VarMutator: Send + Sync {
     /// Returns [`ProviderError`] on validation failure or storage
     /// failure.
     fn update_value(&self, id: VarId, value: SecretString) -> Result<(), ProviderError>;
+
+    /// Link a variable to a project's manifest and (optionally)
+    /// materialise the project's `.env` file in one step.
+    ///
+    /// Performs the equivalent of `evault link NAME --project PATH`
+    /// followed by an optional `evault gen --project PATH`:
+    ///
+    /// 1. Resolves (or creates) the project record for `project_path`.
+    /// 2. Records the link in the registry's link table.
+    /// 3. Reads or creates `<project_path>/evault.toml` and adds a
+    ///    binding pointing at the variable.
+    /// 4. If `materialize` is `true`, resolves every binding of the
+    ///    given profile and writes `<project_path>/.env` (atomically,
+    ///    with the `.gitignore` entry).
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on missing variable, FS failure,
+    /// manifest serialization failure, or registry/secret-store
+    /// failure.
+    fn link_to_project(
+        &self,
+        var_id: VarId,
+        var_name: String,
+        project_path: std::path::PathBuf,
+        profile: String,
+        materialize: bool,
+    ) -> Result<(), ProviderError>;
 }
 
 /// A drafted variable awaiting backend creation.

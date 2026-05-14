@@ -94,6 +94,12 @@ pub struct AppState {
     /// keys to this form and bypasses the Action / filter / modal
     /// paths.
     form: Option<EditorForm>,
+    /// Link-to-project form (modal popup) currently focused. Same
+    /// focus-stealing semantics as `form` above.
+    link_form: Option<LinkForm>,
+    /// Read-only view-value modal currently focused. Shows a
+    /// variable's decrypted value; closed by Esc.
+    view_value: Option<ViewValueModal>,
 }
 
 /// Outcome of [`AppState::dispatch_key`]: signals whether the caller
@@ -131,6 +137,29 @@ pub enum DispatchOutcome {
         /// New value.
         value: SecretString,
         /// Human-readable name for the success toast.
+        name: String,
+    },
+    /// The user submitted the link form; the runtime should call
+    /// [`crate::VarMutator::link_to_project`] and refresh on success.
+    LinkRequested {
+        /// Variable being linked.
+        id: VarId,
+        /// Variable's display name (for the success toast).
+        name: String,
+        /// Project path the user typed.
+        project_path: std::path::PathBuf,
+        /// Profile name to use for the binding.
+        profile: String,
+        /// Whether to also materialize `.env` after linking.
+        materialize: bool,
+    },
+    /// The user asked to view the value of a variable. The runtime
+    /// should fetch via [`crate::VarProvider::get_value`] and then
+    /// call [`AppState::show_value_modal`] with the result.
+    ViewValueRequested {
+        /// Variable id whose value to fetch.
+        id: VarId,
+        /// Display name for the modal title.
         name: String,
     },
 }
@@ -196,6 +225,52 @@ pub(crate) const GROUP_CYCLE: &[Group] = &[Group::User, Group::System, Group::Pr
 #[allow(clippy::redundant_pub_crate)]
 pub(crate) const KIND_CYCLE: &[VarKind] = &[VarKind::Secret, VarKind::Plain];
 
+/// Link-to-project form — modal popup for the `l` flow.
+///
+/// Captures the project path, the profile name, and whether to
+/// materialise the project's `.env` immediately after linking.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) struct LinkForm {
+    /// Variable being linked (id snapshotted at form-open time).
+    pub(crate) var_id: VarId,
+    /// Display name for the form title + success toast.
+    pub(crate) var_name: String,
+    /// Filesystem path the user has typed.
+    pub(crate) path: String,
+    /// Profile name (defaults to `default`).
+    pub(crate) profile: String,
+    /// Whether to materialise `.env` right after linking.
+    pub(crate) materialize: bool,
+    /// Field currently focused.
+    pub(crate) focus: LinkField,
+}
+
+/// Field currently focused inside [`LinkForm`].
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkField {
+    Path,
+    Profile,
+    Materialize,
+}
+
+/// View-value modal — popup showing a variable's decrypted value
+/// after the user pressed `v`. The runtime fetches the value and
+/// calls [`AppState::show_value_modal`] which inserts this struct.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug)]
+pub(crate) struct ViewValueModal {
+    /// Variable name for the modal title.
+    pub(crate) name: String,
+    /// The decrypted value. Held in `SecretString` so it gets
+    /// zeroized on drop.
+    pub(crate) value: SecretString,
+    /// Whether the value is currently rendered verbatim (`true`)
+    /// or as `*` characters. Toggle with `Ctrl+S` while open.
+    pub(crate) show: bool,
+}
+
 /// Modal confirmation request — internal state for the y/n overlay.
 ///
 /// Crate-private: external callers don't construct these; they are
@@ -248,6 +323,8 @@ impl AppState {
             detail_target: None,
             confirm: None,
             form: None,
+            link_form: None,
+            view_value: None,
         }
     }
 
@@ -323,8 +400,16 @@ impl AppState {
         if self.confirm.is_some() {
             return self.dispatch_confirm_key(key);
         }
-        // Modal editor form steals focus next: typed characters
-        // must go to the active field, not to filter / Action paths.
+        // View-value modal: read-only popup, only Esc / Ctrl+S / Ctrl+C
+        // make sense while it's focused.
+        if self.view_value.is_some() {
+            return self.dispatch_view_value_key(key);
+        }
+        // Link form: modal popup capturing path + profile + materialize.
+        if self.link_form.is_some() {
+            return self.dispatch_link_form_key(key);
+        }
+        // Editor form: typed characters go to its fields.
         if self.form.is_some() {
             return self.dispatch_form_key(key);
         }
@@ -332,6 +417,15 @@ impl AppState {
             return self.dispatch_filter_input_key(key);
         }
         let action = Action::from_key(key);
+        // `ViewValue` is special: it needs to emit a runtime request
+        // carrying the selected row's id, which `apply` cannot
+        // express. We intercept it here.
+        if matches!(action, Action::ViewValue) {
+            if let Some((id, name)) = self.request_view_value() {
+                return DispatchOutcome::ViewValueRequested { id, name };
+            }
+            return DispatchOutcome::Continue;
+        }
         self.apply(action);
         if matches!(action, Action::Refresh) {
             DispatchOutcome::RefreshRequested
@@ -446,6 +540,169 @@ impl AppState {
                 }
             }
         }
+    }
+
+    /// Handle a key while the view-value modal is focused.
+    /// `Esc` closes; `Ctrl+S` toggles masking; `Ctrl+C` quits.
+    fn dispatch_view_value_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.view_value = None;
+            }
+            KeyCode::Char('s') if ctrl => {
+                if let Some(modal) = self.view_value.as_mut() {
+                    modal.show = !modal.show;
+                }
+            }
+            _ => {}
+        }
+        DispatchOutcome::Continue
+    }
+
+    /// Handle a key while the link form modal is focused.
+    fn dispatch_link_form_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.link_form = None;
+                DispatchOutcome::Continue
+            }
+            KeyCode::Enter => self.submit_link_form(),
+            KeyCode::Tab => {
+                if let Some(form) = self.link_form.as_mut() {
+                    form.focus = match form.focus {
+                        LinkField::Path => LinkField::Profile,
+                        LinkField::Profile => LinkField::Materialize,
+                        LinkField::Materialize => LinkField::Path,
+                    };
+                }
+                DispatchOutcome::Continue
+            }
+            KeyCode::BackTab => {
+                if let Some(form) = self.link_form.as_mut() {
+                    form.focus = match form.focus {
+                        LinkField::Path => LinkField::Materialize,
+                        LinkField::Profile => LinkField::Path,
+                        LinkField::Materialize => LinkField::Profile,
+                    };
+                }
+                DispatchOutcome::Continue
+            }
+            _ => {
+                if let Some(form) = self.link_form.as_mut() {
+                    handle_link_field_key(form, key);
+                }
+                DispatchOutcome::Continue
+            }
+        }
+    }
+
+    fn submit_link_form(&mut self) -> DispatchOutcome {
+        let Some(form) = self.link_form.take() else {
+            return DispatchOutcome::Continue;
+        };
+        let path = form.path.trim();
+        if path.is_empty() {
+            self.set_error_toast("project path must be non-empty (Esc to cancel)");
+            self.link_form = Some(LinkForm {
+                focus: LinkField::Path,
+                ..form
+            });
+            return DispatchOutcome::Continue;
+        }
+        let profile = if form.profile.trim().is_empty() {
+            "default".to_owned()
+        } else {
+            form.profile.trim().to_owned()
+        };
+        DispatchOutcome::LinkRequested {
+            id: form.var_id,
+            name: form.var_name,
+            project_path: std::path::PathBuf::from(path),
+            profile,
+            materialize: form.materialize,
+        }
+    }
+
+    /// Open the link-form modal for the currently-targeted variable.
+    /// No-op (with info toast) if there is no row selected.
+    fn open_link_form(&mut self) {
+        let target = match self.view {
+            View::Dashboard => self.selected_row(),
+            View::Detail => self.detail_row(),
+        };
+        let Some(var) = target else {
+            if !self.toast_is_error() {
+                self.set_info_toast("no row selected");
+            }
+            return;
+        };
+        self.link_form = Some(LinkForm {
+            var_id: var.id,
+            var_name: var.name.clone(),
+            path: String::new(),
+            profile: "default".to_owned(),
+            materialize: false,
+            focus: LinkField::Path,
+        });
+    }
+
+    /// Trigger a value-view request for the currently-targeted row.
+    /// Returns the outcome the runtime should act on; called from
+    /// `apply(Action::ViewValue)` via the special path.
+    fn request_view_value(&mut self) -> Option<(VarId, String)> {
+        let target = match self.view {
+            View::Dashboard => self.selected_row(),
+            View::Detail => self.detail_row(),
+        };
+        let Some(var) = target else {
+            if !self.toast_is_error() {
+                self.set_info_toast("no row selected");
+            }
+            return None;
+        };
+        Some((var.id, var.name.clone()))
+    }
+
+    /// Show the value modal. Runtime calls this after fetching the
+    /// secret material via [`crate::VarProvider::get_value`].
+    pub fn show_value_modal(&mut self, name: String, value: SecretString) {
+        self.view_value = Some(ViewValueModal {
+            name,
+            value,
+            show: false,
+        });
+    }
+
+    /// Whether the link form modal is currently focused.
+    #[must_use]
+    pub const fn is_link_form_visible(&self) -> bool {
+        self.link_form.is_some()
+    }
+
+    /// Read-only access to the link form for the views layer.
+    pub(crate) const fn current_link_form(&self) -> Option<&LinkForm> {
+        self.link_form.as_ref()
+    }
+
+    /// Whether the view-value modal is currently focused.
+    #[must_use]
+    pub const fn is_view_value_visible(&self) -> bool {
+        self.view_value.is_some()
+    }
+
+    /// Read-only access to the view-value modal for the views layer.
+    pub(crate) const fn current_view_value(&self) -> Option<&ViewValueModal> {
+        self.view_value.as_ref()
     }
 
     /// Handle a key while a confirmation modal is focused.
@@ -570,13 +827,15 @@ impl AppState {
             Action::DeleteVar => self.request_delete_confirmation(),
             Action::NewVar => self.open_new_var_prompt(),
             Action::EditVar => self.open_edit_value_prompt(),
-            Action::Noop => {}
-            // Remaining stubs — link / copy / profile / next-view.
-            // These are tracked for future implementation; the toast
-            // tells the user the key was received but the operation
-            // is not yet wired.
-            Action::LinkVar | Action::CopyValue | Action::SwitchProfile | Action::NextView => {
-                self.set_info_toast("not implemented yet (use `evault link/copy` from shell)");
+            Action::LinkVar => self.open_link_form(),
+            // `ViewValue` is handled in `dispatch_key` directly
+            // because its outcome needs to leave the apply path. We
+            // accept it here as a no-op for tests that bypass
+            // `dispatch_key`. Same for `Noop`.
+            Action::ViewValue | Action::Noop => {}
+            // Remaining stubs — copy / profile / next-view.
+            Action::CopyValue | Action::SwitchProfile | Action::NextView => {
+                self.set_info_toast("not implemented yet (use CLI for now)");
             }
         }
     }
@@ -1179,6 +1438,32 @@ fn handle_field_key(form: &mut EditorForm, key: KeyEvent) {
     }
 }
 
+/// Apply a key to the currently-focused field of the link form.
+fn handle_link_field_key(form: &mut LinkForm, key: KeyEvent) {
+    match form.focus {
+        LinkField::Path => match key.code {
+            KeyCode::Backspace => {
+                form.path.pop();
+            }
+            KeyCode::Char(c) if is_text_input(key) => form.path.push(c),
+            _ => {}
+        },
+        LinkField::Profile => match key.code {
+            KeyCode::Backspace => {
+                form.profile.pop();
+            }
+            KeyCode::Char(c) if is_text_input(key) => form.profile.push(c),
+            _ => {}
+        },
+        LinkField::Materialize => match key.code {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ' | 'y' | 'Y' | 'n' | 'N') => {
+                form.materialize = !form.materialize;
+            }
+            _ => {}
+        },
+    }
+}
+
 /// Whether a key event represents a typeable character (no Ctrl /
 /// Alt modifier; Shift is OK).
 const fn is_text_input(key: KeyEvent) -> bool {
@@ -1196,11 +1481,17 @@ mod tests {
         fn list(&self) -> Result<Vec<VarSummary>, ProviderError> {
             Ok(self.0.clone())
         }
+        fn get_value(&self, _: VarId) -> Result<Option<SecretString>, ProviderError> {
+            Ok(None)
+        }
     }
 
     struct FailingProvider;
     impl VarProvider for FailingProvider {
         fn list(&self) -> Result<Vec<VarSummary>, ProviderError> {
+            Err(ProviderError::Backend("synthetic".into()))
+        }
+        fn get_value(&self, _: VarId) -> Result<Option<SecretString>, ProviderError> {
             Err(ProviderError::Backend("synthetic".into()))
         }
     }

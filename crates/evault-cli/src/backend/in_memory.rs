@@ -146,6 +146,10 @@ impl VarProvider for InMemoryBackend {
         summaries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(summaries)
     }
+
+    fn get_value(&self, id: VarId) -> Result<Option<SecretString>, ProviderError> {
+        BackendOps::get_value(self, id)
+    }
 }
 
 impl VarMutator for InMemoryBackend {
@@ -161,6 +165,24 @@ impl VarMutator for InMemoryBackend {
 
     fn update_value(&self, id: VarId, value: SecretString) -> Result<(), ProviderError> {
         BackendOps::update_value(self, id, value)
+    }
+
+    fn link_to_project(
+        &self,
+        var_id: VarId,
+        var_name: String,
+        project_path: PathBuf,
+        profile: String,
+        materialize: bool,
+    ) -> Result<(), ProviderError> {
+        super::link_helper::link_to_project(
+            self,
+            var_id,
+            var_name,
+            project_path,
+            profile,
+            materialize,
+        )
     }
 }
 
@@ -310,8 +332,7 @@ mod tests {
                 SecretString::new("postgres://x".to_owned().into()),
             )
             .expect("create");
-        let value = backend
-            .get_value(id)
+        let value = BackendOps::get_value(&backend, id)
             .expect("get_value")
             .expect("value present");
         assert_eq!(value.expose_secret(), "postgres://x");

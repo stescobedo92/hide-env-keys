@@ -44,6 +44,8 @@ pub enum Action {
     LinkVar,
     /// Copy the selected variable's value to the clipboard.
     CopyValue,
+    /// Reveal the selected variable's value in a centered modal.
+    ViewValue,
     /// Toggle showing / masking secret values.
     ToggleSecretVisibility,
     /// Open the fuzzy-search overlay.
@@ -102,6 +104,7 @@ impl Action {
             KeyCode::Char('d') => Self::DeleteVar,
             KeyCode::Char('l') => Self::LinkVar,
             KeyCode::Char('y') => Self::CopyValue,
+            KeyCode::Char('v') => Self::ViewValue,
             KeyCode::Char('s') => Self::ToggleSecretVisibility,
             KeyCode::Char('f') if ctrl => Self::StartFuzzy,
             KeyCode::Char('p') => Self::SwitchProfile,

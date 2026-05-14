@@ -22,8 +22,7 @@ pub fn run<B: BackendOps + VarProvider>(backend: &B, mask: bool) -> Result<(), C
         let value = if mask && matches!(row.kind, VarKind::Secret) {
             "*****".to_owned()
         } else {
-            let secret = backend
-                .get_value(row.id)
+            let secret = BackendOps::get_value(backend, row.id)
                 .map_err(|e| CliError::Tui(evault_tui::TuiError::Provider(e)))?
                 .ok_or_else(|| {
                     CliError::Io(std::io::Error::other(format!(

@@ -4,6 +4,8 @@ pub mod dashboard;
 pub mod detail;
 pub mod editor;
 pub mod help;
+pub mod link_form;
+pub mod view_value;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
@@ -73,17 +75,24 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
         help::render(frame, centered(area, 60, 70), theme);
     }
 
-    // Editor form modal: drawn before the confirm modal so a delete
-    // confirmation that fires while the editor is open still sits
-    // on top. In practice this cannot happen because the editor
-    // steals focus, but the layer order is preserved for clarity.
+    // Editor form modal.
     if app.is_form_visible() {
         editor::render(frame, centered(area, 60, 35), app, theme);
     }
 
-    // Confirm modal: drawn last so it sits on top of every other
+    // Link form modal.
+    if app.is_link_form_visible() {
+        link_form::render(frame, centered(area, 60, 30), app, theme);
+    }
+
+    // View-value modal.
+    if app.is_view_value_visible() {
+        view_value::render(frame, centered(area, 70, 40), app, theme);
+    }
+
+    // Confirm modal drawn last so it sits on top of every other
     // layer (dashboard / detail / filter input / toast / help /
-    // editor).
+    // editor / link / view-value).
     if let Some(req) = app.current_confirm() {
         modal::render(frame, centered(area, 50, 25), req, theme);
     }

@@ -26,6 +26,7 @@
 //! BackendOps`).
 
 pub mod in_memory;
+pub mod link_helper;
 pub mod ops;
 pub mod sqlcipher;
 
