@@ -83,9 +83,32 @@ jobs:
         with:
           toolchain: "1.94"
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: release-${{ matrix.target }}
+      # No `Swatinem/rust-cache` here. A release build runs once per
+      # tag, so the modest cache speedup isn't worth its failure modes
+      # — a stale cache occasionally shadows the cargo proxy on the
+      # macOS x86_64 cross-target and `cargo build` ends up executing
+      # `rustup-init` instead, with a misleading "unexpected argument
+      # 'build'" error. Forcing a fresh toolchain state per build
+      # eliminates that.
+
+      # Sanity check the toolchain so a broken `cargo` proxy fails
+      # here (with a clear message) rather than mid-`cargo build` with
+      # the misleading "unexpected argument 'build'" symptom. Uses
+      # only commands that exist with the same syntax on every runner
+      # so no `shell:` override is needed.
+      - name: Sanity check toolchain
+        run: |
+          cargo --version
+          rustc --version
+          rustup show
+
+      # Belt-and-suspenders: ensure the cross target is registered.
+      # `dtolnay/rust-toolchain` already does this via `targets:`, but
+      # an explicit second call is a no-op when the target is present
+      # and a clear failure with a useful message when it isn't.
+      - name: Ensure target installed
+        run: rustup target add ${{ matrix.target }}
+
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: |
