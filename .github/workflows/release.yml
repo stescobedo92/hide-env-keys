@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Re-run the same gates the CI workflow runs on a tag so a green
+  # release is by construction a green CI run.
+  verify:
+    name: Verify gates (test + clippy + fmt)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config gnome-keyring dbus-x11
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test (Linux, headless gnome-keyring)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          eval "$(echo -n "" | gnome-keyring-daemon --login)"
+          eval "$(echo -n "" | gnome-keyring-daemon --components=secrets,ssh,pkcs11 --start)"
+          cargo test --workspace
+      - name: test (non-Linux)
+        if: runner.os != 'Linux'
+        run: cargo test --workspace
+
+  # Per-platform release binary. Uses each platform's native runner
+  # so we don't have to wrangle cross-compilation toolchains.
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: evault
+            archive: tar.xz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: evault.exe
+            archive: zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: evault
+            archive: tar.xz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: evault
+            archive: tar.xz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94"
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Build evault
+        run: cargo build --release --target ${{ matrix.target }} -p evault-cli
+
+      - name: Stage artifact (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact }}" staging/
+          cp README.md LICENSE staging/
+          tar -C staging -cJf "evault-${{ github.ref_name }}-${{ matrix.target }}.tar.xz" .
+          shasum -a 256 "evault-${{ github.ref_name }}-${{ matrix.target }}.tar.xz" \
+            > "evault-${{ github.ref_name }}-${{ matrix.target }}.tar.xz.sha256"
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.artifact }}" staging/
+          Copy-Item README.md, LICENSE staging/
+          Compress-Archive -Path staging/* -DestinationPath "evault-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          $hash = (Get-FileHash "evault-${{ github.ref_name }}-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  evault-${{ github.ref_name }}-${{ matrix.target }}.zip" | Out-File -Encoding ascii "evault-${{ github.ref_name }}-${{ matrix.target }}.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            evault-${{ github.ref_name }}-${{ matrix.target }}.*
+
+  # Collect every per-platform artifact and publish a GitHub Release.
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List staged artifacts
+        run: ls -lah dist/
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/evault-${{ github.ref_name }}-*.tar.xz
+            dist/evault-${{ github.ref_name }}-*.tar.xz.sha256
+            dist/evault-${{ github.ref_name }}-*.zip
+            dist/evault-${{ github.ref_name }}-*.zip.sha256
