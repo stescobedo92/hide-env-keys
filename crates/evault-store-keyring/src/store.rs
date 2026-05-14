@@ -1,5 +1,5 @@
 //! [`OsKeyringSecretStore`] — wraps `keyring_core::Entry` to satisfy the
-//! [`SecretStore`](evault_core::traits::SecretStore) trait contract.
+//! [`evault_core::traits::SecretStore`] trait contract.
 
 use std::sync::OnceLock;
 

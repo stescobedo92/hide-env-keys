@@ -1,5 +1,5 @@
 //! Mapping from `keyring_core::Error` to evault's typed
-//! [`SecretError`](evault_core::error::SecretError).
+//! [`evault_core::error::SecretError`].
 //!
 //! Two responsibilities live here:
 //! 1. Decide whether an error is the canonical "item does not exist"

@@ -113,7 +113,10 @@ pub fn run(conn: &mut Connection) -> Result<(), MetadataError> {
 /// the schema migrations under a single atomic transaction.
 ///
 /// # Errors
-/// Same as [`run`].
+/// Returns [`MetadataError::Backend`] on the same conditions as the
+/// `run` wrapper above (read/write failure, or a future schema version
+/// on disk). Plain text, not an intra-doc link: `run` is gated by the
+/// `sqlcipher` feature, so the symbol is not always in scope for rustdoc.
 pub fn run_in_tx(tx: &rusqlite::Transaction<'_>) -> Result<(), MetadataError> {
     // Read the current version inside the transaction so we observe the
     // same view of the database as the migration writes.
