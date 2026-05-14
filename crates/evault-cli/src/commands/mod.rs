@@ -17,6 +17,7 @@ pub mod gen;
 pub mod import;
 pub mod link;
 pub mod ls;
+pub mod reset;
 pub mod rm;
 pub mod run;
 pub mod scan;

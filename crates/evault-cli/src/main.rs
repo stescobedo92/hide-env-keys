@@ -145,6 +145,15 @@ enum Command {
         #[arg(long)]
         mask: bool,
     },
+    /// Wipe the persistent backend: deletes the metadata DB file
+    /// AND the master-key keyring entry. Recovery path when the DB
+    /// is corrupted or incompatible with the current binary. Loses
+    /// every managed variable; asks for confirmation unless --yes.
+    Reset {
+        /// Skip the interactive confirmation prompt.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 impl Command {
@@ -164,6 +173,7 @@ impl Command {
             Self::Scan { .. } => "scan",
             Self::Import { .. } => "import",
             Self::Export { .. } => "export",
+            Self::Reset { .. } => "reset",
         }
     }
 }
@@ -186,10 +196,16 @@ fn main() -> ExitCode {
         }
         Err(CliError::BackendOpen(e)) => {
             eprintln!("evault: cannot open backend: {}", format_chain(&e));
+            eprintln!();
+            eprintln!("hints:");
             eprintln!(
-                "hint: try `evault --ephemeral` (no persistence) or \
-                 `evault --demo` (seeded ephemeral) to bypass the \
-                 persistent backend."
+                "  - if the DB is corrupted or incompatible with this build, \
+                 run `evault reset` to wipe the metadata DB + the master key \
+                 from the OS keyring and start fresh (loses all managed vars)"
+            );
+            eprintln!(
+                "  - to skip persistence entirely, run with `--ephemeral` (empty) \
+                 or `--demo` (seeded with sample vars)"
             );
             ExitCode::FAILURE
         }
@@ -202,6 +218,13 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<(), CliError> {
     let command = cli.command.unwrap_or(Command::Tui);
+    // `reset` MUST run before any backend open attempt — its whole
+    // purpose is to recover from a state where opening the backend
+    // fails. Honour --demo / --ephemeral only when they make sense
+    // (they don't for reset).
+    if let Command::Reset { yes } = command {
+        return commands::reset::run(yes);
+    }
     if cli.demo {
         dispatch(command, InMemoryBackend::with_demo_data())
     } else if cli.ephemeral {
@@ -266,6 +289,10 @@ where
             group,
         } => commands::import::run(&backend, &path, secret, parse_group(&group)),
         Command::Export { mask } => commands::export::run(&backend, mask),
+        // `Reset` is intercepted in `run()` before we reach the
+        // backend-open path; this arm is unreachable but kept so
+        // the match is exhaustive.
+        Command::Reset { .. } => unreachable!("reset is handled in run() before dispatch"),
     }
 }
 
