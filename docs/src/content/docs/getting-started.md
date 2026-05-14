@@ -33,13 +33,15 @@ The binary name is `evault` (the crate name is `evault-cli`, but the produced bi
 Wraps the same pre-built binary with a thin Node downloader, so it's `npm install`–native.
 
 ```bash
-npm install -g evault
+npm install -g evault-cli
 # or, project-local:
-npm install --save-dev evault
+npm install --save-dev evault-cli
 npx evault
 ```
 
-The post-install step downloads the platform-specific binary from the matching GitHub Release and verifies its SHA256 checksum before placing it in `node_modules/evault/bin/`.
+The npm package is published as `evault-cli` (the short name `evault` was rejected by npm's anti-squat policy because it's too close to the existing `vault` package). The **binary** the package installs is still called `evault` — only the `npm install ...` target name changes.
+
+The post-install step downloads the platform-specific binary from the matching GitHub Release and verifies its SHA256 checksum before placing it in `node_modules/evault-cli/bin/`.
 
 ## First run
 

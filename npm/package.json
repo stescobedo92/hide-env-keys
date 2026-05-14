@@ -1,5 +1,5 @@
 {
-  "name": "evault",
+  "name": "evault-cli",
   "version": "0.1.0",
   "description": "Secure cross-platform TUI + CLI for managing environment variables. Secrets in the OS keyring, metadata in encrypted SQLite, projects bound via evault.toml manifests.",
   "keywords": [

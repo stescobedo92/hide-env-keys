@@ -1,18 +1,20 @@
-# evault
+# evault-cli
 
-[![npm](https://img.shields.io/npm/v/evault.svg)](https://www.npmjs.com/package/evault)
+[![npm](https://img.shields.io/npm/v/evault-cli.svg)](https://www.npmjs.com/package/evault-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE)
 
 > Secure cross-platform TUI + CLI for managing environment variables. npm wrapper around the Rust binary published at [github.com/stescobedo/hide-env-keys](https://github.com/stescobedo/hide-env-keys).
+
+The package is published as `evault-cli` on npm because the shorter name `evault` was rejected by npm's anti-squat policy (too close to the existing `vault` package). The **binary** the package installs is still called `evault`.
 
 ## Install
 
 ```bash
 # Global install
-npm install -g evault
+npm install -g evault-cli
 
 # Project-local
-npm install --save-dev evault
+npm install --save-dev evault-cli
 npx evault
 ```
 
@@ -56,13 +58,13 @@ See the [main repository README](https://github.com/stescobedo/hide-env-keys/blo
 After install, the native binary is at:
 
 ```
-node_modules/evault/bin/evault          (macOS / Linux)
-node_modules/evault/bin/evault.exe      (Windows)
+node_modules/evault-cli/bin/evault          (macOS / Linux)
+node_modules/evault-cli/bin/evault.exe      (Windows)
 ```
 
 ## Troubleshooting
 
-**`evault: binary not found at .../bin/evault`** — the postinstall step failed. Re-run it with `npm rebuild evault`. If your platform is supported but the download still fails, set `EVAULT_SKIP_POSTINSTALL=1` and install from source: `cargo install evault-cli`.
+**`evault: binary not found at .../bin/evault`** — the postinstall step failed. Re-run it with `npm rebuild evault-cli`. If your platform is supported but the download still fails, set `EVAULT_SKIP_POSTINSTALL=1` and install from source: `cargo install evault-cli`.
 
 **Checksum mismatch** — the downloaded archive does not match the published SHA256. Open an issue at [github.com/stescobedo/hide-env-keys/issues](https://github.com/stescobedo/hide-env-keys/issues).
 

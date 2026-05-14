@@ -4,8 +4,8 @@ name: Publish npm
 # containing the per-platform binaries. The npm postinstall script
 # downloads those binaries from the matching GitHub Release at
 # `npm install` time, so the Release MUST exist before this workflow
-# publishes — a user running `npm install evault` against a half-
-# finished release would 404.
+# publishes — a user running `npm install evault-cli` against a
+# half-finished release would 404.
 #
 # Two trigger modes:
 #
