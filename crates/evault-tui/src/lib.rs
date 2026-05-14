@@ -25,11 +25,16 @@
 //! Drive the state machine programmatically (no terminal needed):
 //!
 //! ```
+//! use evault_core::model::VarId;
 //! use evault_tui::{Action, AppState, ProviderError, VarProvider, VarSummary};
+//! use secrecy::SecretString;
 //!
 //! struct Empty;
 //! impl VarProvider for Empty {
 //!     fn list(&self) -> Result<Vec<VarSummary>, ProviderError> { Ok(Vec::new()) }
+//!     fn get_value(&self, _id: VarId) -> Result<Option<SecretString>, ProviderError> {
+//!         unimplemented!()
+//!     }
 //! }
 //!
 //! let mut app = AppState::new();
@@ -44,15 +49,34 @@
 //! [`VarMutator`] for the delete flow:
 //!
 //! ```no_run
+//! use std::path::PathBuf;
 //! use evault_core::model::VarId;
-//! use evault_tui::{run_tui, ProviderError, VarMutator, VarProvider, VarSummary};
+//! use evault_tui::{run_tui, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
+//! use secrecy::SecretString;
 //!
 //! struct EmptyBackend;
 //! impl VarProvider for EmptyBackend {
 //!     fn list(&self) -> Result<Vec<VarSummary>, ProviderError> { Ok(Vec::new()) }
+//!     fn get_value(&self, _id: VarId) -> Result<Option<SecretString>, ProviderError> {
+//!         Ok(None)
+//!     }
 //! }
 //! impl VarMutator for EmptyBackend {
 //!     fn delete(&self, _id: VarId) -> Result<(), ProviderError> { Ok(()) }
+//!     fn create(&self, _draft: VarDraft) -> Result<VarId, ProviderError> {
+//!         Ok(VarId::new_v4())
+//!     }
+//!     fn update_value(&self, _id: VarId, _value: SecretString) -> Result<(), ProviderError> {
+//!         Ok(())
+//!     }
+//!     fn link_to_project(
+//!         &self,
+//!         _var_id: VarId,
+//!         _var_name: String,
+//!         _project_path: PathBuf,
+//!         _profile: String,
+//!         _materialize: bool,
+//!     ) -> Result<(), ProviderError> { Ok(()) }
 //! }
 //! run_tui(EmptyBackend).unwrap();
 //! ```
