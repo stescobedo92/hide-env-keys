@@ -6,7 +6,22 @@
 
 ## Install
 
-From source (requires Rust 1.94+):
+### Pre-built binaries
+
+Tagged releases publish per-platform binaries to [GitHub Releases](https://github.com/stescobedo/hide-env-keys/releases). Each archive contains the `evault` binary plus `README.md` and `LICENSE`; each archive also has a sibling `.sha256` for integrity verification.
+
+Available targets:
+
+| Platform | Archive |
+|---|---|
+| Linux x86_64 | `evault-<version>-x86_64-unknown-linux-gnu.tar.xz` |
+| Windows x86_64 | `evault-<version>-x86_64-pc-windows-msvc.zip` |
+| macOS Intel | `evault-<version>-x86_64-apple-darwin.tar.xz` |
+| macOS Apple Silicon | `evault-<version>-aarch64-apple-darwin.tar.xz` |
+
+### From source
+
+Requires Rust 1.94+ (workspace toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` will pick it up automatically).
 
 ```bash
 git clone https://github.com/stescobedo/hide-env-keys
@@ -40,55 +55,124 @@ In the TUI:
 | `g` `G` | Jump to top / bottom |
 | `PgDn` `PgUp` | Page navigation |
 | `Enter` | Open Detail view |
-| `Esc` | Cascade: toast → filter → detail → help → quit |
-| `Ctrl+F` | Open fuzzy filter (`nucleo-matcher`) |
-| `s` | Toggle secret visibility |
+| `n` | New variable (modal: name + group + kind + value) |
+| `e` | Edit value of selected var |
 | `d` | Delete selected var (with `[y/n]` confirm modal) |
+| `l` | Link selected var to a project (modal: path + profile + materialize toggle) |
+| `v` | View decrypted value of selected var in a modal |
+| `R` | **Run a command in a project with env injected** (see [below](#run-commands-inside-the-tui)) |
+| `s` | Toggle secret visibility (mask / show) |
+| `y` | Copy value to clipboard *(not yet wired)* |
+| `Ctrl+F` | Open fuzzy filter (`nucleo-matcher`) |
+| `p` | Switch active profile *(not yet wired)* |
+| `Tab` | Next top-level view |
 | `r` | Refresh from backend |
 | `?` | Help overlay |
+| `Esc` | Cascade: error modal → toast → filter → detail → help → quit |
 | `q` / `Ctrl+C` | Quit cleanly |
+
+Failed actions (invalid name, missing project, spawn errors, …) surface in a centered **error modal** with a plain-English hint explaining what went wrong and how to fix it. Press `Enter` or `Esc` to acknowledge.
+
+#### Run commands inside the TUI
+
+Press `R` (uppercase — lowercase `r` is Refresh) from the dashboard to open the run-in-project modal:
+
+```
+┌─ run in project ──────────────────────────────┐
+│                                                │
+│  Path:     ./my-app                            │
+│  Profile:  default                             │
+│  Command:  npm start                           │
+│                                                │
+│  Tab cycle · Enter run · Esc cancel            │
+└────────────────────────────────────────────────┘
+```
+
+`Tab` / `Shift+Tab` cycle fields; `Enter` submits. On submit the TUI:
+
+1. Tears the alternate screen down so the child inherits a normal terminal (with stdio passthrough — the user interacts with the child directly).
+2. Loads `<path>/evault.toml`, resolves every binding for the chosen profile (secrets from the keyring, inline literals from the manifest), and injects them as the child's environment.
+3. Spawns the program synchronously.
+4. Re-enters raw mode + alternate screen when the child exits, refreshes the dashboard, and surfaces a toast with the exit code (`ran \`npm start\` (exit 0)`).
+
+No `.env` ever touches disk. The `Command` field tokenises on whitespace; for quoted arguments or pipes use `evault run` from the shell instead.
 
 ### Command line
 
 ```bash
-# Create a variable (prompts for the value, no-echo for secrets)
+# Create a variable (prompts for the value, no-echo for secrets).
+# `--group` accepts user (default), system, project, or any custom string.
 evault add API_KEY --secret
 evault add NODE_ENV --group user
 
 # List variables
 evault ls
 
-# Delete (with interactive y/N; -y to skip)
+# Delete (with interactive y/N; -y to skip).
 evault rm API_KEY
 evault rm API_KEY -y
 
-# Link a variable to a project's manifest
+# Link a variable to a project's manifest. Optionally under a profile,
+# and/or with an alias that exposes the variable under a different key
+# in the project.
 evault link API_KEY --project ./my-app
+evault link DATABASE_URL --project ./api --profile staging --alias DB_URL
 
-# Generate a .env from the project's manifest (atomic, .gitignore'd)
+# Generate a .env from the project's manifest (atomic write, .gitignore'd
+# automatically; CRLF / NUL injection in values is rejected).
 evault gen --project ./my-app
+evault gen --project ./api --profile staging
 
-# Run a command with the env injected (no .env on disk)
+# Run a command with the env injected (no .env on disk).
+# Anything after `--` is the program + args; the child inherits stdio.
 evault run --project ./my-app -- npm start
+evault run --project ./api --profile staging -- ./serve --port 8080
 
-# Scan a source tree for env-var references
+# Scan a source tree for env-var references and cross-reference with
+# the registry. Recognises JS/TS, Python, Rust, Go, and Shell syntax.
 evault scan ./my-app
 # Reports ORPHANS (in code, not registry), UNUSED (in registry, not code),
 # REFERENCED (in both).
 
-# Import existing .env (non-destructive: existing names are skipped)
+# Import existing .env (non-destructive: existing names are skipped).
 evault import ./my-app/.env --secret
+evault import ./my-app/.env --group project
 
-# Export to stdout (--mask redacts secret values to *****)
+# Export to stdout (`--mask` redacts secret values to *****).
+evault export
 evault export --mask
+
+# Recover from a corrupted / incompatible backend.
+# Wipes the metadata DB AND the master-key keyring entry, asks for
+# confirmation (type "RESET") unless `-y`. Loses every managed variable.
+evault reset
+evault reset -y
 ```
 
-Every subcommand also accepts `--demo` / `--ephemeral` if you want to try it without touching your real keyring or DB:
+Every subcommand except `reset` also accepts `--demo` / `--ephemeral` if you want to try it without touching your real keyring or DB:
 
 ```bash
 evault --demo ls       # list the 10 seed vars without persistence
 evault --ephemeral ls  # empty list, ephemeral backend
 ```
+
+### Recovery: when the backend won't open
+
+If you upgrade `evault` and the new binary cannot decrypt or migrate your existing DB, you will see:
+
+```
+evault: cannot open backend: open database '/.../db.sqlite':
+incorrect key or corrupted database
+```
+
+That happens when the on-disk schema is from a future build, the master key in the keyring drifted, or the file got truncated. The recovery path is:
+
+```bash
+evault reset    # type RESET to confirm — this is destructive
+evault          # first run after reset generates a fresh DB + master key
+```
+
+`reset` removes the metadata DB (plus its `-wal`, `-shm`, `-journal` siblings) and the `evault / master-key` keyring entry — but NOT the per-variable secret values in the keyring (those orphan into the keyring under their UUIDs). If you want a fully clean slate, also delete entries whose service is `evault` from your OS credential store after running `reset`.
 
 ### Profiles
 
@@ -152,13 +236,14 @@ Workspace of 10 crates. Business logic depends only on traits (`evault-core/src/
 - **Secret values**: stored in the OS keyring under service `evault`, keyed by the variable's UUID. Constant-time compares; values are `zeroize`d on drop via `secrecy::SecretString`.
 - **Metadata**: SQLite database. With the `sqlcipher` feature enabled at build time, the entire DB is encrypted at rest with the master key (requires Strawberry Perl on Windows); otherwise the metadata (names, lengths, timestamps — never values) is unencrypted while secret values remain in the keyring.
 - **`.env` materialisation**: atomic write-then-rename; sibling `.gitignore` updated automatically. CRLF / NUL byte injection in values is rejected.
-- **Child process injection**: validates every key (must match `[A-Z_][A-Z0-9_]*`) and rejects values containing NUL before touching `std::process::Command`. The `EVAULT_*` prefix is stripped from the parent environment before applying the overlay so internal config does not leak into untrusted children.
+- **Variable names**: validated against `[A-Za-z_][A-Za-z0-9_]{0,63}` (start with letter or underscore, then letters/digits/underscore, up to 64 chars). Error messages report the offending byte **offset** but never the byte itself, so a value pasted into the name field by mistake cannot leak into logs.
+- **Child process injection**: every key is name-validated, and values are rejected if they contain a NUL byte (NUL would terminate the OS environment block prematurely). The `EVAULT_*` prefix is stripped from the parent environment before applying the overlay so internal config never leaks into untrusted children. The check is case-insensitive on Windows (where env-var names are case-insensitive) and case-sensitive on Unix.
 
 ## Development
 
 ```bash
 cargo build --workspace
-cargo test --workspace                                   # ~280 tests
+cargo test --workspace                                   # ~270 tests (unit + integration + doctests)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
