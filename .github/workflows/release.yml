@@ -96,16 +96,20 @@ jobs:
       # 'build'" error. Forcing a fresh toolchain state per build
       # eliminates that.
 
-      # Sanity check the toolchain so a broken `cargo` proxy fails
-      # here (with a clear message) rather than mid-`cargo build` with
-      # the misleading "unexpected argument 'build'" symptom. Uses
-      # only commands that exist with the same syntax on every runner
-      # so no `shell:` override is needed.
-      - name: Sanity check toolchain
+      # Bypass the broken `~/.cargo/bin/cargo` proxy on macOS by
+      # prepending the toolchain's own bin directory (which contains
+      # the real cargo binary, not a `rustup-init` copy) to PATH.
+      # `rustup which cargo` returns the absolute path of the real
+      # cargo inside the active toolchain — its dirname is what we
+      # prepend. Harmless on Linux/Windows where the proxy is healthy.
+      - name: Bypass broken cargo proxy
+        shell: bash
         run: |
-          cargo --version
-          rustc --version
-          rustup show
+          set -euo pipefail
+          rustup default 1.94
+          cargo_bin=$(rustup which cargo)
+          echo "Real cargo at: $cargo_bin"
+          dirname "$cargo_bin" >> "$GITHUB_PATH"
 
       # Belt-and-suspenders: ensure the cross target is registered.
       # `dtolnay/rust-toolchain` already does this via `targets:`, but
@@ -113,6 +117,12 @@ jobs:
       # and a clear failure with a useful message when it isn't.
       - name: Ensure target installed
         run: rustup target add ${{ matrix.target }}
+
+      - name: Sanity check toolchain
+        run: |
+          cargo --version
+          rustc --version
+          rustup show
 
       - name: Install Linux deps
         if: runner.os == 'Linux'

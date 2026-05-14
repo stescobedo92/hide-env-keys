@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     tags: ["v*"]
   pull_request:
 
@@ -10,11 +10,6 @@ env:
   CARGO_TERM_COLOR: always
   # Pin the toolchain explicitly via env so rustup's cargo proxy does
   # NOT re-resolve `rust-toolchain.toml` on every `cargo` invocation.
-  # That re-resolution is what triggers the flaky
-  # `cargo→rustup-init` symptom on macos-latest runners: the proxy
-  # decides the toolchain needs a touch-up, and during the touch-up
-  # the cargo proxy itself ends up pointing at `rustup-init`.
-  # `RUSTUP_TOOLCHAIN` short-circuits the lookup with no file read.
   RUSTUP_TOOLCHAIN: "1.94"
 
 jobs:
@@ -59,15 +54,28 @@ jobs:
           toolchain: "1.94"
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # Sanity check the toolchain so a broken cargo proxy fails here
-      # (with a clear message) rather than mid-`cargo clippy` with the
-      # misleading "unexpected argument 'clippy'" symptom. Seen on
-      # macos-latest where `cargo` occasionally resolves to
-      # `rustup-init` after the cache restore. `rustup default` is
-      # idempotent and forces the proxies to be set up correctly.
+      - name: Bypass broken cargo proxy on macOS
+        # On macos-latest the `~/.cargo/bin/cargo` hardlink is
+        # sometimes a copy of `rustup-init` (the installer) rather
+        # than the rustup multiplexer, so `cargo <subcommand>`
+        # crashes with "unexpected argument '<subcommand>'". Work
+        # around it by prepending the toolchain's OWN bin directory
+        # (which contains the real cargo binary, not a proxy) to
+        # PATH for every subsequent step.
+        # `rustup which cargo` returns the absolute path of the real
+        # cargo inside the active toolchain — e.g.
+        # ~/.rustup/toolchains/1.94-aarch64-apple-darwin/bin/cargo.
+        # The dirname of that is what we prepend. Harmless on
+        # Linux/Windows where the proxy is healthy.
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup default 1.94
+          cargo_bin=$(rustup which cargo)
+          echo "Real cargo at: $cargo_bin"
+          dirname "$cargo_bin" >> "$GITHUB_PATH"
       - name: Sanity check toolchain
         run: |
-          rustup default 1.94
           cargo --version
           rustc --version
           cargo clippy --version
@@ -94,10 +102,16 @@ jobs:
       # with `--all-features` which pulls in the SQLCipher build chain
       # (perl + OpenSSL); the cache for that combination has been
       # observed to interact badly with the rustup toolchain
-      # re-resolution on macos-latest, manifesting as `cargo test`
-      # invoking `rustup-init` with an "unexpected argument" error.
-      # Dropping the cache costs a few minutes per CI run and buys
-      # reliable test execution on the macOS leg.
+      # re-resolution on macos-latest.
+      - name: Bypass broken cargo proxy on macOS
+        # See the matching step in the `clippy` job for context.
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup default 1.94
+          cargo_bin=$(rustup which cargo)
+          echo "Real cargo at: $cargo_bin"
+          dirname "$cargo_bin" >> "$GITHUB_PATH"
       - name: Sanity check toolchain
         run: |
           cargo --version
@@ -128,9 +142,20 @@ jobs:
         with:
           toolchain: "1.94"
       - uses: Swatinem/rust-cache@v2
+      - name: Bypass broken cargo proxy
+        # See the matching step in the `clippy` job for context.
+        # Doc job only runs on Linux but the workaround is harmless
+        # there, and keeping the three jobs uniform makes the
+        # workflow easier to reason about.
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup default 1.94
+          cargo_bin=$(rustup which cargo)
+          echo "Real cargo at: $cargo_bin"
+          dirname "$cargo_bin" >> "$GITHUB_PATH"
       - name: Sanity check toolchain
         run: |
-          rustup default 1.94
           cargo --version
           rustc --version
       - name: Install Linux deps
