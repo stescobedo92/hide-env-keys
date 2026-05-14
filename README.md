@@ -1,6 +1,31 @@
-# evault
+<p align="center">
+  <img src="docs/public/logo.svg" alt="evault" height="72" />
+</p>
 
-> Secure cross-platform TUI + CLI for managing environment variables.
+<h1 align="center">evault</h1>
+
+<p align="center">
+  <strong>Secure cross-platform TUI + CLI for managing environment variables.</strong>
+</p>
+
+<p align="center">
+  <a href="https://stescobedo.github.io/hide-env-keys/"><strong>Documentation</strong></a>
+  ·
+  <a href="https://crates.io/crates/evault-cli">crates.io</a>
+  ·
+  <a href="https://www.npmjs.com/package/evault">npm</a>
+  ·
+  <a href="https://github.com/stescobedo/hide-env-keys/releases">Releases</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/stescobedo/hide-env-keys/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/stescobedo/hide-env-keys/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://crates.io/crates/evault-cli"><img alt="crates.io" src="https://img.shields.io/crates/v/evault-cli.svg?logo=rust" /></a>
+  <a href="https://www.npmjs.com/package/evault"><img alt="npm" src="https://img.shields.io/npm/v/evault.svg?logo=npm" /></a>
+  <a href="https://github.com/stescobedo/hide-env-keys/blob/master/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+</p>
+
+---
 
 `evault` keeps every project's environment variables in one place: secrets in your OS's native keyring (Windows Credential Manager / macOS Keychain / Linux Secret Service), metadata in a local SQLite database (encrypted with SQLCipher when the feature is enabled at build time), and per-project bindings in a declarative `evault.toml` manifest. Variables can be materialised into a `.env` file or injected directly into a child process via `evault run` — never touching disk in plaintext.
 
