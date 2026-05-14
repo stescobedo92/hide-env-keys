@@ -37,12 +37,17 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Layout: top spacer · message · spacer · hint · spacer · dismiss.
+    // The message row is a FIXED 3 lines (enough for the typical
+    // backend message wrapped to the modal's width) so the hint
+    // sits flush below it rather than getting pushed to the
+    // bottom of an expanded message row.
     let rows = Layout::vertical([
         Constraint::Length(1), // top spacer
-        Constraint::Min(2),    // message (wraps)
-        Constraint::Length(1), // spacer
-        Constraint::Min(3),    // hint (wraps; multi-line via \n)
-        Constraint::Length(1), // spacer
+        Constraint::Length(3), // message — fixed; up to 3 wrapped lines
+        Constraint::Length(1), // small spacer (kept for readability)
+        Constraint::Min(3),    // hint — fills remaining
+        Constraint::Length(1), // bottom spacer
         Constraint::Length(1), // dismiss hint
     ])
     .split(inner);
