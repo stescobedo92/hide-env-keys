@@ -51,6 +51,18 @@ jobs:
           toolchain: "1.94"
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # Sanity check the toolchain so a broken cargo proxy fails here
+      # (with a clear message) rather than mid-`cargo clippy` with the
+      # misleading "unexpected argument 'clippy'" symptom. Seen on
+      # macos-latest where `cargo` occasionally resolves to
+      # `rustup-init` after the cache restore. `rustup default` is
+      # idempotent and forces the proxies to be set up correctly.
+      - name: Sanity check toolchain
+        run: |
+          rustup default 1.94
+          cargo --version
+          rustc --version
+          cargo clippy --version
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: |
@@ -71,6 +83,13 @@ jobs:
         with:
           toolchain: "1.94"
       - uses: Swatinem/rust-cache@v2
+      # Same flaky-cargo-proxy guard as the clippy job. See its
+      # `Sanity check toolchain` step for the rationale.
+      - name: Sanity check toolchain
+        run: |
+          rustup default 1.94
+          cargo --version
+          rustc --version
       - name: Install Linux deps (Secret Service for keyring)
         if: runner.os == 'Linux'
         run: |
@@ -97,6 +116,11 @@ jobs:
         with:
           toolchain: "1.94"
       - uses: Swatinem/rust-cache@v2
+      - name: Sanity check toolchain
+        run: |
+          rustup default 1.94
+          cargo --version
+          rustc --version
       - name: Install Linux deps
         run: |
           sudo apt-get update
