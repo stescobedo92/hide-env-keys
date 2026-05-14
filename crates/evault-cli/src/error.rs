@@ -9,6 +9,8 @@ use thiserror::Error;
 
 use evault_tui::TuiError;
 
+use crate::backend::SqlCipherOpenError;
+
 /// Top-level CLI error.
 #[non_exhaustive]
 #[derive(Error, Debug)]
@@ -29,6 +31,10 @@ pub enum CliError {
     /// "TUI error".
     #[error("TUI error")]
     Tui(#[from] TuiError),
+    /// The persistent backend could not be opened. The inner error
+    /// carries the chain walker through its `source()` implementations.
+    #[error("backend open error")]
+    BackendOpen(#[from] SqlCipherOpenError),
 }
 
 /// Format an error and its full `source()` chain into a single line

@@ -1,14 +1,18 @@
 //! `evault` — secure cross-platform CLI for managing environment variables.
 //!
-//! Phase 1: launches the TUI against an in-memory backend so the
-//! interface is runnable end-to-end. Subcommands (`ls`, `add`, `rm`,
-//! `link`, `run`, `gen`, `scan`) are stubbed and will be wired in
-//! subsequent phases. Real persistence (`SQLCipher` + OS keyring) is
-//! also a follow-up phase.
+//! By default the binary opens a persistent backend backed by SQLite
+//! (encrypted with SQLCipher when the feature is enabled at build
+//! time) and the OS keyring; the `--demo` / `--ephemeral` flags swap
+//! in an in-memory backend for testing or kicking the tires.
 #![forbid(unsafe_code)]
 // A CLI legitimately writes to stdout/stderr. The workspace-wide
 // warning is intended for libraries; the binary opts out explicitly.
-#![allow(clippy::print_stdout, clippy::print_stderr)]
+#![allow(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::doc_markdown,
+    clippy::needless_pass_by_value
+)]
 
 mod backend;
 mod error;
@@ -17,8 +21,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-use crate::backend::InMemoryBackend;
+use crate::backend::{BackendOps, InMemoryBackend, SqlCipherBackend};
 use crate::error::{format_chain, CliError};
+use evault_tui::{VarMutator, VarProvider};
 
 /// POSIX-conventional exit code for "command-line misuse / feature
 /// unavailable". Distinct from `1` (runtime failure) so wrapper
@@ -31,19 +36,26 @@ const EXIT_UNIMPLEMENTED: u8 = 2;
     version,
     about = "Secure cross-platform manager for environment variables.",
     long_about = "Run without a subcommand to launch the interactive TUI. \
-                  Subcommands (ls, add, rm, link, run, gen, scan) operate \
-                  non-interactively for scripting and CI.\n\
+                  Subcommands (ls, add, rm, link, run, gen, scan, import, \
+                  export) operate non-interactively for scripting and CI.\n\
                   \n\
-                  Phase 1 ships the TUI only; subcommands marked '(stub)' \
-                  in --help return exit code 2 and will be wired in phase 2."
+                  By default `evault` opens a persistent backend: metadata \
+                  in ~/.local/share/evault/db.sqlite (or platform equivalent), \
+                  secret values in the OS keyring, and a master key \
+                  bootstrapped from / into that keyring on first run. \
+                  Use --demo for an ephemeral seeded backend or --ephemeral \
+                  for a clean in-memory store."
 )]
 struct Cli {
-    /// Seed the in-memory backend with a handful of demo variables
-    /// so the TUI has something to interact with on a fresh launch.
-    /// Useful for kicking the tires (fuzzy filter, detail view,
-    /// delete modal) without scripting any setup.
-    #[arg(long, global = true)]
+    /// Use an ephemeral in-memory backend pre-populated with 10 demo
+    /// variables so the TUI has something to interact with. Useful
+    /// for kicking the tires without touching disk or the keyring.
+    #[arg(long, global = true, conflicts_with = "ephemeral")]
     demo: bool,
+    /// Use an ephemeral in-memory backend with no seed data. Useful
+    /// for tests / CI that want a clean slate without persistence.
+    #[arg(long, global = true)]
+    ephemeral: bool,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -96,29 +108,51 @@ fn main() -> ExitCode {
             ExitCode::from(EXIT_UNIMPLEMENTED)
         }
         Err(CliError::Tui(e)) => {
-            // Walk the source chain so the user sees the underlying
-            // cause (terminal I/O kind, provider message) rather than
-            // a bare "TUI error".
             eprintln!("evault: {}", format_chain(&e));
+            ExitCode::FAILURE
+        }
+        Err(CliError::BackendOpen(e)) => {
+            eprintln!("evault: cannot open backend: {}", format_chain(&e));
+            eprintln!(
+                "hint: try `evault --ephemeral` (no persistence) or \
+                 `evault --demo` (seeded ephemeral) to bypass the \
+                 persistent backend."
+            );
             ExitCode::FAILURE
         }
     }
 }
 
+/// Top-level dispatch.
+///
+/// Static dispatch over backend type: each branch calls a generic
+/// helper that the compiler monomorphises for the concrete backend.
+/// No `dyn Backend` because the generic params travel through the
+/// TUI's `VarProvider + VarMutator` bounds.
 fn run(cli: Cli) -> Result<(), CliError> {
-    match cli.command.unwrap_or(Command::Tui) {
+    let command = cli.command.unwrap_or(Command::Tui);
+    if cli.demo {
+        dispatch(command, InMemoryBackend::with_demo_data())
+    } else if cli.ephemeral {
+        dispatch(command, InMemoryBackend::new())
+    } else {
+        let backend = SqlCipherBackend::open_or_init()?;
+        dispatch(command, backend)
+    }
+}
+
+fn dispatch<B>(command: Command, backend: B) -> Result<(), CliError>
+where
+    B: VarProvider + VarMutator + BackendOps,
+{
+    match command {
         Command::Tui => {
-            let backend = if cli.demo {
-                InMemoryBackend::with_demo_data()
-            } else {
-                InMemoryBackend::new()
-            };
             evault_tui::run_tui(backend)?;
             Ok(())
         }
-        cmd @ (Command::Ls | Command::Add { .. } | Command::Rm { .. }) => {
+        Command::Ls | Command::Add { .. } | Command::Rm { .. } => {
             Err(CliError::SubcommandUnimplemented {
-                name: cmd.name().to_owned(),
+                name: command.name().to_owned(),
             })
         }
     }
