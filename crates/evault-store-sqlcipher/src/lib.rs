@@ -52,3 +52,11 @@ mod migrations;
 pub use metadata::{SqlCipherMetadataStore, SqlCipherOpenError};
 
 pub use migrations::SCHEMA_VERSION;
+
+/// Whether this crate was compiled with `SQLCipher` support enabled.
+#[cfg(feature = "sqlcipher")]
+pub const SQLCIPHER_ENABLED: bool = true;
+
+/// Whether this crate was compiled with `SQLCipher` support enabled.
+#[cfg(not(feature = "sqlcipher"))]
+pub const SQLCIPHER_ENABLED: bool = false;

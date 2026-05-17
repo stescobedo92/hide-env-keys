@@ -1,11 +1,13 @@
 //! Top-level views composed by the runtime.
 
+pub mod audit;
 pub mod dashboard;
 pub mod detail;
 pub mod editor;
 pub mod error_modal;
 pub mod help;
 pub mod link_form;
+pub mod profile_form;
 pub mod run_form;
 pub mod view_value;
 
@@ -55,6 +57,7 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     match app.current_view() {
         View::Dashboard => dashboard::render(frame, body, app, theme),
         View::Detail => detail::render(frame, body, app, theme),
+        View::Audit => audit::render(frame, body, app, theme),
     }
     keybindings::render(frame, keybindings_rect, app, theme);
     statusbar::render(frame, status, app, theme);
@@ -89,6 +92,11 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     // Run-in-project form modal.
     if app.is_run_form_visible() {
         run_form::render(frame, centered(area, 60, 30), app, theme);
+    }
+
+    // Active profile form modal.
+    if app.is_profile_form_visible() {
+        profile_form::render(frame, centered(area, 50, 24), app, theme);
     }
 
     // View-value modal.

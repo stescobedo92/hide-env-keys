@@ -51,7 +51,7 @@
 //! ```no_run
 //! use std::path::PathBuf;
 //! use evault_core::model::VarId;
-//! use evault_tui::{run_tui, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
+//! use evault_tui::{AuditProvider, run_tui, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 //! use secrecy::SecretString;
 //!
 //! struct EmptyBackend;
@@ -69,6 +69,7 @@
 //!     fn update_value(&self, _id: VarId, _value: SecretString) -> Result<(), ProviderError> {
 //!         Ok(())
 //!     }
+//!     fn record_copy(&self, _id: VarId) -> Result<(), ProviderError> { Ok(()) }
 //!     fn link_to_project(
 //!         &self,
 //!         _var_id: VarId,
@@ -84,6 +85,14 @@
 //!         _program: String,
 //!         _args: Vec<String>,
 //!     ) -> Result<Option<i32>, ProviderError> { Ok(Some(0)) }
+//! }
+//! impl AuditProvider for EmptyBackend {
+//!     fn recent_audit(
+//!         &self,
+//!         _limit: usize,
+//!     ) -> Result<Vec<evault_core::model::AuditEntry>, ProviderError> {
+//!         Ok(Vec::new())
+//!     }
 //! }
 //! run_tui(EmptyBackend).unwrap();
 //! ```

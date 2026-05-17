@@ -124,3 +124,173 @@ pub fn run<B: BackendOps + evault_tui::VarProvider>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    use evault_core::model::{Group, Profile, Project, ProjectId, ProjectVar, Var, VarId, VarKind};
+    use evault_tui::{ProviderError, VarSummary};
+    use secrecy::SecretString;
+    use tempfile::TempDir;
+    use time::OffsetDateTime;
+
+    #[derive(Default)]
+    struct FakeBackend {
+        names: BTreeSet<String>,
+    }
+
+    impl FakeBackend {
+        fn with_names(names: &[&str]) -> Self {
+            Self {
+                names: names.iter().map(|name| (*name).to_owned()).collect(),
+            }
+        }
+    }
+
+    impl BackendOps for FakeBackend {
+        fn find_var_by_name(&self, name: &str) -> Result<Option<Var>, ProviderError> {
+            if !self.names.contains(name) {
+                return Ok(None);
+            }
+            Ok(Some(Var::from_trusted_parts(
+                VarId::new_v4(),
+                name.to_owned(),
+                Group::User,
+                VarKind::Plain,
+                Vec::new(),
+                1,
+                OffsetDateTime::UNIX_EPOCH,
+                OffsetDateTime::UNIX_EPOCH,
+            )))
+        }
+
+        fn create_var(
+            &self,
+            _name: &str,
+            _group: Group,
+            _kind: VarKind,
+            _value: SecretString,
+        ) -> Result<VarId, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn update_value(&self, _id: VarId, _value: SecretString) -> Result<(), ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn get_value(&self, _id: VarId) -> Result<Option<SecretString>, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn list_projects(&self) -> Result<Vec<Project>, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn find_project_by_path(
+            &self,
+            _path: &std::path::Path,
+        ) -> Result<Option<Project>, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn create_project(
+            &self,
+            _name: &str,
+            _path: std::path::PathBuf,
+        ) -> Result<ProjectId, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn link_var(
+            &self,
+            _project_id: ProjectId,
+            _var_id: VarId,
+            _profile: Profile,
+            _alias: Option<String>,
+        ) -> Result<(), ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn unlink_var(
+            &self,
+            _project_id: ProjectId,
+            _var_id: VarId,
+            _profile: &Profile,
+        ) -> Result<(), ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn links_for_project(
+            &self,
+            _project_id: ProjectId,
+        ) -> Result<Vec<ProjectVar>, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn recent_audit(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<evault_core::model::AuditEntry>, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn record_var_action(
+            &self,
+            _id: VarId,
+            _action: evault_core::model::AuditAction,
+        ) -> Result<(), ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+
+        fn summarise(&self, _var: &Var) -> Result<VarSummary, ProviderError> {
+            Err(ProviderError::Backend("unused test stub".into()))
+        }
+    }
+
+    impl evault_tui::VarProvider for FakeBackend {
+        fn list(&self) -> Result<Vec<VarSummary>, ProviderError> {
+            Ok(self
+                .names
+                .iter()
+                .map(|name| VarSummary {
+                    id: VarId::new_v4(),
+                    name: name.clone(),
+                    group: Group::User,
+                    kind: VarKind::Plain,
+                    value_len: 1,
+                    linked_projects: 0,
+                    updated_at: OffsetDateTime::UNIX_EPOCH,
+                })
+                .collect())
+        }
+
+        fn get_value(&self, _id: VarId) -> Result<Option<SecretString>, ProviderError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn scan_ci_fails_when_orphans_or_unused_exist() {
+        let dir = TempDir::new().expect("tmpdir");
+        std::fs::write(
+            dir.path().join("app.js"),
+            "const db = process.env.DATABASE_URL;\n",
+        )
+        .expect("write");
+        let backend = FakeBackend::with_names(&["UNUSED_KEY"]);
+
+        let err = run(&backend, dir.path(), true).expect_err("ci should fail");
+        assert!(err.to_string().contains("io error"));
+    }
+
+    #[test]
+    fn scan_ci_succeeds_when_registry_matches_references() {
+        let dir = TempDir::new().expect("tmpdir");
+        std::fs::write(dir.path().join("app.js"), "process.env.DATABASE_URL;\n").expect("write");
+        let backend = FakeBackend::with_names(&["DATABASE_URL"]);
+
+        run(&backend, dir.path(), true).expect("matching registry should pass");
+    }
+}

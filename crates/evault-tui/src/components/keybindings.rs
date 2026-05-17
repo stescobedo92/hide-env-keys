@@ -26,28 +26,33 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     if area.height == 0 {
         return;
     }
-    let on_detail = matches!(app.current_view(), View::Detail);
-
-    let row1: Vec<Pair<'static>> = if on_detail {
-        vec![
+    let row1: Vec<Pair<'static>> = match app.current_view() {
+        View::Detail => vec![
             Pair("Esc", "back"),
             Pair("s", "toggle secret"),
             Pair("e", "edit value"),
             Pair("d", "delete"),
             Pair("l", "link to project"),
             Pair("v", "view value"),
+            Pair("y", "copy value"),
+        ],
+        View::Audit => vec![
+            Pair("Tab", "dashboard"),
+            Pair("r", "refresh"),
+            Pair("p", "profile"),
             Pair("?", "help"),
-        ]
-    } else {
-        vec![
+            Pair("Esc", "back"),
+            Pair("q", "quit"),
+        ],
+        View::Dashboard => vec![
             Pair("j/k \u{2195}", "move"),
             Pair("Enter", "detail"),
             Pair("n", "new var"),
             Pair("e", "edit value"),
             Pair("d", "delete"),
             Pair("l", "link to project"),
-            Pair("v", "view value"),
-        ]
+            Pair("v/y", "view/copy"),
+        ],
     };
 
     let row2: Vec<Pair<'static>> = vec![
@@ -55,6 +60,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
         Pair("s", "mask/show secrets"),
         Pair("r", "refresh"),
         Pair("R", "run in project"),
+        Pair("p", "profile"),
+        Pair("Tab", "audit"),
         Pair("?", "help overlay"),
         Pair("Esc", "back / dismiss"),
         Pair("q", "quit"),

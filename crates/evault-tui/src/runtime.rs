@@ -6,10 +6,11 @@ use std::time::Duration;
 
 use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
+use secrecy::ExposeSecret;
 
 use crate::app::{AppState, DispatchOutcome, View};
 use crate::error::TuiError;
-use crate::provider::{VarMutator, VarProvider};
+use crate::provider::{AuditProvider, VarMutator, VarProvider};
 use crate::theme::Theme;
 use crate::views;
 
@@ -51,7 +52,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// ```no_run
 /// use std::path::PathBuf;
 /// use evault_core::model::VarId;
-/// use evault_tui::{run_tui, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
+/// use evault_tui::{AuditProvider, run_tui, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 /// use secrecy::SecretString;
 ///
 /// struct Empty;
@@ -69,6 +70,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///     fn update_value(&self, _id: VarId, _value: SecretString) -> Result<(), ProviderError> {
 ///         Ok(())
 ///     }
+///     fn record_copy(&self, _id: VarId) -> Result<(), ProviderError> { Ok(()) }
 ///     fn link_to_project(
 ///         &self,
 ///         _var_id: VarId,
@@ -85,13 +87,21 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///         _args: Vec<String>,
 ///     ) -> Result<Option<i32>, ProviderError> { Ok(Some(0)) }
 /// }
+/// impl AuditProvider for Empty {
+///     fn recent_audit(
+///         &self,
+///         _limit: usize,
+///     ) -> Result<Vec<evault_core::model::AuditEntry>, ProviderError> {
+///         Ok(Vec::new())
+///     }
+/// }
 ///
 /// run_tui(Empty).unwrap();
 /// ```
 #[allow(clippy::needless_pass_by_value)]
 pub fn run_tui<B>(backend: B) -> Result<(), TuiError>
 where
-    B: VarProvider + VarMutator,
+    B: VarProvider + VarMutator + AuditProvider,
 {
     let mut terminal = ratatui::try_init()?;
     let loop_result = event_loop(&mut terminal, &backend);
@@ -122,7 +132,7 @@ where
 #[allow(clippy::too_many_lines)]
 fn event_loop<B>(terminal: &mut DefaultTerminal, backend: &B) -> Result<(), TuiError>
 where
-    B: VarProvider + VarMutator + ?Sized,
+    B: VarProvider + VarMutator + AuditProvider + ?Sized,
 {
     let mut app = AppState::new();
     let theme = Theme::dark();
@@ -130,6 +140,9 @@ where
     // Initial load. A first-load failure is a hard error: the user
     // sees an empty TUI and has no way to recover.
     app.refresh(backend)?;
+    if let Err(e) = app.refresh_audit(backend) {
+        app.set_error_toast(format!("audit load failed: {e}"));
+    }
 
     while !app.quit_requested() {
         terminal.draw(|frame| views::render(frame, &mut app, &theme))?;
@@ -167,6 +180,10 @@ where
                     // error toast is sticky and survives further input.
                     match app.refresh(backend) {
                         Ok(()) => {
+                            if let Err(e) = app.refresh_audit(backend) {
+                                app.set_error_toast(format!("audit refresh failed: {e}"));
+                                continue;
+                            }
                             // When a filter is applied the dashboard
                             // title reads `vars (matched/total)`. The
                             // toast mirrors that format so a user with
@@ -210,6 +227,10 @@ where
                                 app.set_error_toast(format!(
                                     "created `{name}` but refresh failed: {e}"
                                 ));
+                            } else if let Err(e) = app.refresh_audit(backend) {
+                                app.set_error_toast(format!(
+                                    "created `{name}` but audit refresh failed: {e}"
+                                ));
                             } else {
                                 app.set_info_toast(format!("created `{name}`"));
                             }
@@ -240,6 +261,10 @@ where
                             if let Err(e) = app.refresh(backend) {
                                 app.set_error_toast(format!(
                                     "updated `{name}` but refresh failed: {e}"
+                                ));
+                            } else if let Err(e) = app.refresh_audit(backend) {
+                                app.set_error_toast(format!(
+                                    "updated `{name}` but audit refresh failed: {e}"
                                 ));
                             } else {
                                 app.set_info_toast(format!("updated `{name}`"));
@@ -285,6 +310,11 @@ where
                             if let Err(e) = app.refresh(backend) {
                                 app.set_error_toast(format!(
                                     "linked `{name}` to {}{suffix} but refresh failed: {e}",
+                                    project_path.display()
+                                ));
+                            } else if let Err(e) = app.refresh_audit(backend) {
+                                app.set_error_toast(format!(
+                                    "linked `{name}` to {}{suffix} but audit refresh failed: {e}",
                                     project_path.display()
                                 ));
                             } else {
@@ -359,6 +389,10 @@ where
                             };
                             if let Err(e) = app.refresh(backend) {
                                 app.set_error_toast(format!("{msg} but refresh failed: {e}"));
+                            } else if let Err(e) = app.refresh_audit(backend) {
+                                app.set_error_toast(format!(
+                                    "{msg} but audit refresh failed: {e}"
+                                ));
                             } else {
                                 app.set_info_toast(msg);
                             }
@@ -380,6 +414,80 @@ where
                         Ok(Ok(Some(value))) => {
                             app.show_value_modal(name, value);
                         }
+                    }
+                }
+                DispatchOutcome::CopyValueRequested { id, name } => {
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| backend.get_value(id)));
+                    match result {
+                        Err(_) => {
+                            app.set_error_toast("copy failed: backend panicked");
+                        }
+                        Ok(Err(e)) => {
+                            app.set_error_toast(format!("copy failed: {e}"));
+                        }
+                        Ok(Ok(None)) => {
+                            app.set_error_toast(format!("value missing for `{name}`"));
+                        }
+                        Ok(Ok(Some(value))) => {
+                            let copied = arboard::Clipboard::new()
+                                .and_then(|mut clipboard| clipboard.set_text(value.expose_secret().to_owned()));
+                            match copied {
+                                Err(e) => {
+                                    app.show_error_modal(
+                                        "copy failed",
+                                        format!("clipboard unavailable: {e}"),
+                                        Some(
+                                            "The value was read but not copied. Try again from a graphical session or use `evault export --mask` for inspection."
+                                                .to_owned(),
+                                        ),
+                                    );
+                                }
+                                Ok(()) => match panic::catch_unwind(AssertUnwindSafe(|| {
+                                    backend.record_copy(id)
+                                })) {
+                                    Err(_) => {
+                                        app.set_error_toast(
+                                            "copied value but audit recording panicked",
+                                        );
+                                    }
+                                    Ok(Err(e)) => {
+                                        app.set_error_toast(format!(
+                                            "copied `{name}` but audit failed: {e}"
+                                        ));
+                                    }
+                                    Ok(Ok(())) => {
+                                        if let Err(e) = app.refresh_audit(backend) {
+                                            app.set_error_toast(format!(
+                                                "copied `{name}` but audit refresh failed: {e}"
+                                            ));
+                                        } else {
+                                            app.set_info_toast(format!(
+                                                "copied `{name}` to clipboard"
+                                            ));
+                                        }
+                                    }
+                                },
+                            }
+                        }
+                    }
+                }
+                DispatchOutcome::ProfileSwitchRequested { profile } => {
+                    match evault_core::model::Profile::try_named(profile.clone()) {
+                        Ok(valid) => {
+                            app.set_active_profile(valid.as_str().to_owned());
+                            app.set_info_toast(format!(
+                                "active profile: {}",
+                                valid.as_str()
+                            ));
+                        }
+                        Err(e) => app.show_error_modal(
+                            "profile failed",
+                            e.to_string(),
+                            Some(
+                                "Use 1-32 ASCII letters, digits, '-' or '_', and include at least one non-digit character."
+                                    .to_owned(),
+                            ),
+                        ),
                     }
                 }
                 DispatchOutcome::DeleteRequested { id, name } => {
@@ -427,7 +535,13 @@ where
                             }
                             match app.refresh(backend) {
                                 Ok(()) => {
-                                    app.set_info_toast(format!("deleted `{name}`"));
+                                    if let Err(e) = app.refresh_audit(backend) {
+                                        app.set_error_toast(format!(
+                                            "deleted `{name}` but audit refresh failed: {e}"
+                                        ));
+                                    } else {
+                                        app.set_info_toast(format!("deleted `{name}`"));
+                                    }
                                 }
                                 Err(e) => {
                                     // Refresh failed — splice the

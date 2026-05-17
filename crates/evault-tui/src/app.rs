@@ -1,13 +1,13 @@
 //! Deterministic state machine driving the dashboard.
 
-use evault_core::model::{Group, VarId, VarKind};
+use evault_core::model::{AuditEntry, Group, VarId, VarKind};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 use secrecy::SecretString;
 
 use crate::event::Action;
 use crate::filter::FilterState;
-use crate::provider::{ProviderError, VarDraft, VarProvider, VarSummary};
+use crate::provider::{AuditProvider, ProviderError, VarDraft, VarProvider, VarSummary};
 
 /// In-session toast displayed at the bottom of the screen.
 ///
@@ -61,6 +61,8 @@ pub enum View {
     /// Read-only inspection of the row that was selected when the
     /// user pressed Enter.
     Detail,
+    /// Recent audit entries.
+    Audit,
 }
 
 /// Dashboard state.
@@ -79,6 +81,8 @@ pub struct AppState {
     quit: bool,
     filter: Option<FilterState>,
     view: View,
+    audit_rows: Vec<AuditEntry>,
+    active_profile: String,
     /// `Some(id)` while `view == Detail`. Tracking the inspected
     /// variable by id (rather than by selection index) keeps the
     /// Detail screen from silently re-pointing at a different row
@@ -100,6 +104,8 @@ pub struct AppState {
     /// Run-in-project form (modal popup) currently focused. Captures
     /// the project path, the profile, and the command line to spawn.
     run_form: Option<RunForm>,
+    /// Active-profile switch prompt currently focused.
+    profile_form: Option<ProfileForm>,
     /// Read-only view-value modal currently focused. Shows a
     /// variable's decrypted value; closed by Esc.
     view_value: Option<ViewValueModal>,
@@ -168,6 +174,15 @@ pub enum DispatchOutcome {
         /// Display name for the modal title.
         name: String,
     },
+    /// The user asked to copy a value. The runtime fetches the value, writes
+    /// it to the OS clipboard, and records an audit entry without surfacing
+    /// the secret in the UI state.
+    CopyValueRequested {
+        /// Variable id whose value to copy.
+        id: VarId,
+        /// Display name for the success toast.
+        name: String,
+    },
     /// The user submitted the run-in-project form. The runtime should
     /// restore the terminal, call
     /// [`crate::VarMutator::run_in_project`], and re-init the TUI
@@ -181,6 +196,11 @@ pub enum DispatchOutcome {
         program: String,
         /// Arguments forwarded to the program.
         args: Vec<String>,
+    },
+    /// The user submitted a new active profile for TUI defaults.
+    ProfileSwitchRequested {
+        /// Profile name.
+        profile: String,
     },
 }
 
@@ -297,6 +317,14 @@ pub(crate) struct RunForm {
     pub(crate) focus: RunField,
 }
 
+/// Active profile prompt — modal popup for the `p` flow.
+#[allow(clippy::redundant_pub_crate)]
+#[derive(Debug, Clone)]
+pub(crate) struct ProfileForm {
+    /// Profile name to use as the default for future link/run forms.
+    pub(crate) profile: String,
+}
+
 /// Field currently focused inside [`RunForm`].
 #[allow(clippy::redundant_pub_crate)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,11 +417,14 @@ impl AppState {
             quit: false,
             filter: None,
             view: View::Dashboard,
+            audit_rows: Vec::new(),
+            active_profile: "default".to_owned(),
             detail_target: None,
             confirm: None,
             form: None,
             link_form: None,
             run_form: None,
+            profile_form: None,
             view_value: None,
             error_modal: None,
         }
@@ -436,6 +467,18 @@ impl AppState {
             self.detail_target = None;
             self.set_error_toast("variable removed elsewhere \u{2014} returned to dashboard");
         }
+        Ok(())
+    }
+
+    /// Re-read recent audit entries for the audit view.
+    ///
+    /// # Errors
+    /// Propagates whatever [`ProviderError`] the audit provider returns.
+    pub fn refresh_audit<P: AuditProvider + ?Sized>(
+        &mut self,
+        provider: &P,
+    ) -> Result<(), ProviderError> {
+        self.audit_rows = provider.recent_audit(100)?;
         Ok(())
     }
 
@@ -489,6 +532,10 @@ impl AppState {
         if self.run_form.is_some() {
             return self.dispatch_run_form_key(key);
         }
+        // Profile form: modal popup capturing the active profile.
+        if self.profile_form.is_some() {
+            return self.dispatch_profile_form_key(key);
+        }
         // Editor form: typed characters go to its fields.
         if self.form.is_some() {
             return self.dispatch_form_key(key);
@@ -503,6 +550,12 @@ impl AppState {
         if matches!(action, Action::ViewValue) {
             if let Some((id, name)) = self.request_view_value() {
                 return DispatchOutcome::ViewValueRequested { id, name };
+            }
+            return DispatchOutcome::Continue;
+        }
+        if matches!(action, Action::CopyValue) {
+            if let Some((id, name)) = self.request_view_value() {
+                return DispatchOutcome::CopyValueRequested { id, name };
             }
             return DispatchOutcome::Continue;
         }
@@ -802,7 +855,7 @@ impl AppState {
     fn open_run_form(&mut self) {
         self.run_form = Some(RunForm {
             path: String::new(),
-            profile: "default".to_owned(),
+            profile: self.active_profile.clone(),
             command: String::new(),
             focus: RunField::Path,
         });
@@ -819,12 +872,78 @@ impl AppState {
         self.run_form.as_ref()
     }
 
+    fn dispatch_profile_form_key(&mut self, key: KeyEvent) -> DispatchOutcome {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if matches!(key.code, KeyCode::Char('c')) && ctrl {
+            self.quit = true;
+            return DispatchOutcome::Continue;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.profile_form = None;
+                DispatchOutcome::Continue
+            }
+            KeyCode::Enter => self.submit_profile_form(),
+            KeyCode::Backspace => {
+                if let Some(form) = self.profile_form.as_mut() {
+                    form.profile.pop();
+                }
+                DispatchOutcome::Continue
+            }
+            KeyCode::Char(c) if is_text_input(key) => {
+                if let Some(form) = self.profile_form.as_mut() {
+                    form.profile.push(c);
+                }
+                DispatchOutcome::Continue
+            }
+            _ => DispatchOutcome::Continue,
+        }
+    }
+
+    fn submit_profile_form(&mut self) -> DispatchOutcome {
+        let Some(form) = self.profile_form.take() else {
+            return DispatchOutcome::Continue;
+        };
+        let profile = form.profile.trim();
+        if profile.is_empty() {
+            self.set_error_toast("profile must be non-empty (Esc to cancel)");
+            self.profile_form = Some(form);
+            return DispatchOutcome::Continue;
+        }
+        DispatchOutcome::ProfileSwitchRequested {
+            profile: profile.to_owned(),
+        }
+    }
+
+    fn open_profile_form(&mut self) {
+        self.profile_form = Some(ProfileForm {
+            profile: self.active_profile.clone(),
+        });
+    }
+
+    /// Whether the active-profile modal is currently focused.
+    #[must_use]
+    pub const fn is_profile_form_visible(&self) -> bool {
+        self.profile_form.is_some()
+    }
+
+    /// Read-only access to the focused profile form (for the views layer).
+    pub(crate) const fn current_profile_form(&self) -> Option<&ProfileForm> {
+        self.profile_form.as_ref()
+    }
+
+    /// Set the active TUI profile after the runtime validates the request.
+    pub fn set_active_profile(&mut self, profile: impl Into<String>) {
+        self.active_profile = profile.into();
+    }
+
     /// Open the link-form modal for the currently-targeted variable.
     /// No-op (with info toast) if there is no row selected.
     fn open_link_form(&mut self) {
         let target = match self.view {
             View::Dashboard => self.selected_row(),
             View::Detail => self.detail_row(),
+            View::Audit => None,
         };
         let Some(var) = target else {
             if !self.toast_is_error() {
@@ -836,7 +955,7 @@ impl AppState {
             var_id: var.id,
             var_name: var.name.clone(),
             path: String::new(),
-            profile: "default".to_owned(),
+            profile: self.active_profile.clone(),
             materialize: false,
             focus: LinkField::Path,
         });
@@ -849,6 +968,7 @@ impl AppState {
         let target = match self.view {
             View::Dashboard => self.selected_row(),
             View::Detail => self.detail_row(),
+            View::Audit => None,
         };
         let Some(var) = target else {
             if !self.toast_is_error() {
@@ -1060,15 +1180,13 @@ impl AppState {
             Action::EditVar => self.open_edit_value_prompt(),
             Action::LinkVar => self.open_link_form(),
             Action::RunInProject => self.open_run_form(),
+            Action::SwitchProfile => self.open_profile_form(),
+            Action::NextView => self.next_view(),
             // `ViewValue` is handled in `dispatch_key` directly
             // because its outcome needs to leave the apply path. We
             // accept it here as a no-op for tests that bypass
             // `dispatch_key`. Same for `Noop`.
-            Action::ViewValue | Action::Noop => {}
-            // Remaining stubs — copy / profile / next-view.
-            Action::CopyValue | Action::SwitchProfile | Action::NextView => {
-                self.set_info_toast("not implemented yet (use CLI for now)");
-            }
+            Action::ViewValue | Action::CopyValue | Action::Noop => {}
         }
     }
 
@@ -1135,6 +1253,19 @@ impl AppState {
         self.detail_target = None;
     }
 
+    const fn next_view(&mut self) {
+        match self.view {
+            View::Dashboard | View::Detail => {
+                self.view = View::Audit;
+                self.detail_target = None;
+            }
+            View::Audit => {
+                self.view = View::Dashboard;
+                self.detail_target = None;
+            }
+        }
+    }
+
     /// Splice the given variable id out of the row buffer locally
     /// without going through the provider.
     ///
@@ -1184,6 +1315,7 @@ impl AppState {
         let target = match self.view {
             View::Dashboard => self.selected_row(),
             View::Detail => self.detail_row(),
+            View::Audit => None,
         };
         let Some(var) = target else {
             if !self.toast_is_error() {
@@ -1236,6 +1368,7 @@ impl AppState {
         let target = match self.view {
             View::Dashboard => self.selected_row(),
             View::Detail => self.detail_row(),
+            View::Audit => None,
         };
         let Some(var) = target else {
             if !self.toast_is_error() {
@@ -1455,6 +1588,18 @@ impl AppState {
     #[must_use]
     pub const fn current_view(&self) -> View {
         self.view
+    }
+
+    /// Active profile used as the default for link/run forms.
+    #[must_use]
+    pub fn active_profile(&self) -> &str {
+        &self.active_profile
+    }
+
+    /// Recent audit rows shown in the audit view.
+    #[must_use]
+    pub fn audit_rows(&self) -> &[AuditEntry] {
+        &self.audit_rows
     }
 
     /// The currently-displayed toast text, if any.

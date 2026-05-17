@@ -450,6 +450,23 @@ where
         Ok(self.audit.list(limit)?)
     }
 
+    /// Record a variable-scoped audit action without mutating the variable.
+    ///
+    /// Intended for read-side but security-relevant actions such as copying a
+    /// value to the clipboard. The entry references only the variable id and
+    /// action; secret material is never stored in the audit note.
+    ///
+    /// # Errors
+    /// Returns [`MetadataError::VarNotFound`] if the variable is absent, or any
+    /// propagated audit sink failure.
+    pub fn record_var_action(&self, var_id: VarId, action: AuditAction) -> Result<(), CoreError> {
+        if self.metadata.get_var(var_id)?.is_none() {
+            return Err(MetadataError::VarNotFound(var_id).into());
+        }
+        self.audit_var(var_id, action)?;
+        Ok(())
+    }
+
     // -------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------

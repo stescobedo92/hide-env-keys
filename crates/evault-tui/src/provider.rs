@@ -148,6 +148,15 @@ pub trait VarMutator: Send + Sync {
     /// failure.
     fn update_value(&self, id: VarId, value: SecretString) -> Result<(), ProviderError>;
 
+    /// Record that a user copied a variable value to the system clipboard.
+    ///
+    /// Implementations must not persist the copied value itself. The audit
+    /// entry should include only metadata such as the variable id/action.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on storage failure.
+    fn record_copy(&self, id: VarId) -> Result<(), ProviderError>;
+
     /// Link a variable to a project's manifest and (optionally)
     /// materialise the project's `.env` file in one step.
     ///

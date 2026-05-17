@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use evault_core::model::{
-    AuditEntry, Group, Profile, Project, ProjectId, ProjectVar, Var, VarId, VarKind,
+    AuditAction, AuditEntry, Group, Profile, Project, ProjectId, ProjectVar, Var, VarId, VarKind,
 };
 use evault_tui::{ProviderError, VarSummary};
 use secrecy::SecretString;
@@ -89,6 +89,17 @@ pub trait BackendOps {
         alias: Option<String>,
     ) -> Result<(), ProviderError>;
 
+    /// Remove a variable linkage from a project/profile pair.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on storage failure.
+    fn unlink_var(
+        &self,
+        project_id: ProjectId,
+        var_id: VarId,
+        profile: &Profile,
+    ) -> Result<(), ProviderError>;
+
     /// Links registered against a project, in stable order.
     ///
     /// # Errors
@@ -100,6 +111,12 @@ pub trait BackendOps {
     /// # Errors
     /// Returns [`ProviderError`] on storage failure.
     fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>, ProviderError>;
+
+    /// Record a variable-scoped audit action such as clipboard copy.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] on storage failure.
+    fn record_var_action(&self, id: VarId, action: AuditAction) -> Result<(), ProviderError>;
 
     /// Convenience: project a [`Var`] into the dashboard's
     /// [`VarSummary`] shape (with current link count). Implemented

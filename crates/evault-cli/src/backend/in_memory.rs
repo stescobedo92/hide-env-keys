@@ -7,7 +7,8 @@
 use std::path::PathBuf;
 
 use evault_core::model::{
-    AuditEntry, Group, Profile, Project, ProjectId, ProjectVar, Var, VarFilter, VarId, VarKind,
+    AuditAction, AuditEntry, Group, Profile, Project, ProjectId, ProjectVar, Var, VarFilter, VarId,
+    VarKind,
 };
 use evault_core::service::RegistryService;
 use evault_core::traits::{SystemClock, UuidV4IdGenerator};
@@ -173,6 +174,10 @@ impl VarMutator for InMemoryBackend {
         BackendOps::update_value(self, id, value)
     }
 
+    fn record_copy(&self, id: VarId) -> Result<(), ProviderError> {
+        BackendOps::record_var_action(self, id, AuditAction::Copied)
+    }
+
     fn link_to_project(
         &self,
         var_id: VarId,
@@ -265,6 +270,17 @@ impl BackendOps for InMemoryBackend {
             .map_err(|e| core_to_provider(&e))
     }
 
+    fn unlink_var(
+        &self,
+        project_id: ProjectId,
+        var_id: VarId,
+        profile: &Profile,
+    ) -> Result<(), ProviderError> {
+        self.registry
+            .unlink_var(project_id, var_id, profile)
+            .map_err(|e| core_to_provider(&e))
+    }
+
     fn links_for_project(&self, project_id: ProjectId) -> Result<Vec<ProjectVar>, ProviderError> {
         self.registry
             .links_for_project(project_id)
@@ -274,6 +290,12 @@ impl BackendOps for InMemoryBackend {
     fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>, ProviderError> {
         self.registry
             .recent_audit(limit)
+            .map_err(|e| core_to_provider(&e))
+    }
+
+    fn record_var_action(&self, id: VarId, action: AuditAction) -> Result<(), ProviderError> {
+        self.registry
+            .record_var_action(id, action)
             .map_err(|e| core_to_provider(&e))
     }
 

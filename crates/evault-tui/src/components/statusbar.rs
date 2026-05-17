@@ -21,6 +21,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     let view_name = match app.current_view() {
         View::Dashboard => "dashboard",
         View::Detail => "detail",
+        View::Audit => "audit",
     };
 
     let line = Line::from(vec![
@@ -29,6 +30,8 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
         Span::styled(format!("{view_name} "), dim),
         Span::styled("\u{2022} ", dim),
         Span::styled(format!("rows: {} ", app.rows().len()), dim),
+        Span::styled("\u{2022} ", dim),
+        Span::styled(format!("profile: {} ", app.active_profile()), dim),
         Span::styled("\u{2022} ", dim),
         Span::styled(format!("secrets: {secrets_marker}"), dim),
     ]);

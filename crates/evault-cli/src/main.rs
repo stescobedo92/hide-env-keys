@@ -25,7 +25,7 @@ use evault_core::model::{Group, Profile};
 
 use crate::backend::{BackendOps, InMemoryBackend, SqlCipherBackend};
 use crate::error::{format_chain, CliError};
-use evault_tui::{VarMutator, VarProvider};
+use evault_tui::{AuditProvider, VarMutator, VarProvider};
 
 /// POSIX-conventional exit code for "command-line misuse / feature
 /// unavailable". Distinct from `1` (runtime failure) so wrapper
@@ -71,6 +71,8 @@ enum Command {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    /// Diagnose local storage, keyring, and build capabilities.
+    Doctor,
     /// Generate shell completion scripts.
     Completions {
         /// Shell to generate completions for.
@@ -110,6 +112,32 @@ enum Command {
         /// (defaults to the variable's own name).
         #[arg(long)]
         alias: Option<String>,
+    },
+    /// Remove a variable link from a project manifest and registry.
+    Unlink {
+        /// Variable name.
+        name: String,
+        /// Project root containing `evault.toml`.
+        #[arg(long)]
+        project: PathBuf,
+        /// Profile name; defaults to `default`.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Manifest key to remove if it differs from the variable name.
+        #[arg(long)]
+        key: Option<String>,
+    },
+    /// Compare a project's manifest, registry links, and materialized env file.
+    Diff {
+        /// Project root containing `evault.toml`.
+        #[arg(long)]
+        project: PathBuf,
+        /// Profile to resolve. Defaults to `default`.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Compare against `.env.<ENVIRONMENT>` instead of `.env`.
+        #[arg(long, value_name = "ENVIRONMENT")]
+        environment: Option<String>,
     },
     /// Materialize the project's effective environment to `.env`.
     Gen {
@@ -187,10 +215,13 @@ impl Command {
             Self::Tui => "tui",
             Self::Ls => "ls",
             Self::Audit { .. } => "audit",
+            Self::Doctor => "doctor",
             Self::Completions { .. } => "completions",
             Self::Add { .. } => "add",
             Self::Rm { .. } => "rm",
             Self::Link { .. } => "link",
+            Self::Unlink { .. } => "unlink",
+            Self::Diff { .. } => "diff",
             Self::Gen { .. } => "gen",
             Self::Run { .. } => "run",
             Self::Scan { .. } => "scan",
@@ -246,6 +277,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
         clap_complete::generate(shell, &mut cmd, "evault", &mut std::io::stdout());
         return Ok(());
     }
+    if matches!(command, Command::Doctor) {
+        return commands::doctor::run();
+    }
     // `reset` MUST run before any backend open attempt — its whole
     // purpose is to recover from a state where opening the backend
     // fails. Honour --demo / --ephemeral only when they make sense
@@ -265,7 +299,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
 
 fn dispatch<B>(command: Command, backend: B) -> Result<(), CliError>
 where
-    B: VarProvider + VarMutator + BackendOps,
+    B: VarProvider + VarMutator + AuditProvider + BackendOps,
 {
     match command {
         Command::Tui => {
@@ -277,6 +311,7 @@ where
         }
         Command::Ls => commands::ls::run(&backend),
         Command::Audit { limit } => commands::audit::run(&backend, limit),
+        Command::Doctor => unreachable!("doctor is handled in run() before backend open"),
         Command::Add {
             name,
             secret,
@@ -289,6 +324,22 @@ where
             profile,
             alias,
         } => commands::link::run(&backend, &name, &project, parse_profile(profile), alias),
+        Command::Unlink {
+            name,
+            project,
+            profile,
+            key,
+        } => commands::unlink::run(&backend, &name, &project, parse_profile(profile), key),
+        Command::Diff {
+            project,
+            profile,
+            environment,
+        } => commands::diff::run(
+            &backend,
+            &project,
+            parse_profile(profile),
+            environment.as_deref(),
+        ),
         Command::Gen {
             project,
             profile,
