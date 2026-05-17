@@ -33,8 +33,8 @@ use evault_core::model::{
 use evault_core::service::RegistryService;
 use evault_core::traits::{SystemClock, UuidV4IdGenerator};
 use evault_store_keyring::OsKeyringSecretStore;
-use evault_store_memory::MemoryAuditSink;
 use evault_store_sqlcipher::SqlCipherMetadataStore;
+use evault_tui::AuditProvider;
 use evault_tui::{ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
@@ -55,7 +55,7 @@ pub const MASTER_KEY_KEYRING_USER: &str = "master-key";
 pub type SqlCipherRegistry = RegistryService<
     SqlCipherMetadataStore,
     OsKeyringSecretStore,
-    MemoryAuditSink,
+    SqlCipherMetadataStore,
     SystemClock,
     UuidV4IdGenerator,
 >;
@@ -136,8 +136,9 @@ impl SqlCipherBackend {
                 source,
             }
         })?;
+        let audit = metadata.clone();
         Ok(Self {
-            registry: RegistryService::with_defaults(metadata, secrets, MemoryAuditSink::new()),
+            registry: RegistryService::with_defaults(metadata, secrets, audit),
             db_path,
         })
     }
@@ -216,6 +217,12 @@ impl VarProvider for SqlCipherBackend {
 
     fn get_value(&self, id: VarId) -> Result<Option<SecretString>, ProviderError> {
         BackendOps::get_value(self, id)
+    }
+}
+
+impl AuditProvider for SqlCipherBackend {
+    fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>, ProviderError> {
+        BackendOps::recent_audit(self, limit)
     }
 }
 

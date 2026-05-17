@@ -12,7 +12,7 @@ use evault_core::model::{
 use evault_core::service::RegistryService;
 use evault_core::traits::{SystemClock, UuidV4IdGenerator};
 use evault_store_memory::{MemoryAuditSink, MemoryMetadataStore, MemorySecretStore};
-use evault_tui::{ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
+use evault_tui::{AuditProvider, ProviderError, VarDraft, VarMutator, VarProvider, VarSummary};
 use secrecy::SecretString;
 
 use super::{core_to_provider, format_core_chain, BackendOps};
@@ -149,6 +149,12 @@ impl VarProvider for InMemoryBackend {
 
     fn get_value(&self, id: VarId) -> Result<Option<SecretString>, ProviderError> {
         BackendOps::get_value(self, id)
+    }
+}
+
+impl AuditProvider for InMemoryBackend {
+    fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>, ProviderError> {
+        BackendOps::recent_audit(self, limit)
     }
 }
 

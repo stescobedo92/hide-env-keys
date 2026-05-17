@@ -12,6 +12,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 pub mod add;
+pub mod audit;
 pub mod export;
 pub mod gen;
 pub mod import;

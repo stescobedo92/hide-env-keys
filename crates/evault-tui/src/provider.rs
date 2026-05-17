@@ -1,6 +1,6 @@
 //! Adapter trait between the TUI and any data source.
 
-use evault_core::model::{Group, VarId, VarKind};
+use evault_core::model::{AuditEntry, Group, VarId, VarKind};
 use secrecy::SecretString;
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -80,6 +80,18 @@ pub trait VarProvider: Send + Sync {
     /// # Errors
     /// Returns [`ProviderError`] on storage failure.
     fn get_value(&self, id: VarId) -> Result<Option<SecretString>, ProviderError>;
+}
+
+/// Read-side source for audit entries.
+///
+/// Kept separate from [`VarProvider`] so the dashboard can stay small while
+/// future audit views opt into the broader read surface explicitly.
+pub trait AuditProvider: Send + Sync {
+    /// Return recent audit entries, newest first, capped by `limit`.
+    ///
+    /// # Errors
+    /// Returns [`ProviderError`] if the backend cannot read the audit log.
+    fn recent_audit(&self, limit: usize) -> Result<Vec<AuditEntry>, ProviderError>;
 }
 
 /// Write-side counterpart to [`VarProvider`].

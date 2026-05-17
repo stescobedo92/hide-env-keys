@@ -2,7 +2,7 @@
 //! project metadata and the audit log.
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use thiserror::Error;
@@ -58,7 +58,15 @@ pub enum SqlCipherOpenError {
 /// runs inside a single transaction to honour the atomicity contract
 /// declared on the trait.
 pub struct SqlCipherMetadataStore {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl Clone for SqlCipherMetadataStore {
+    fn clone(&self) -> Self {
+        Self {
+            conn: Arc::clone(&self.conn),
+        }
+    }
 }
 
 impl std::fmt::Debug for SqlCipherMetadataStore {
@@ -101,7 +109,7 @@ impl SqlCipherMetadataStore {
             migrations::run(&mut conn).map_err(|e| SqlCipherOpenError::Schema(format!("{e}")))?;
         }
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 

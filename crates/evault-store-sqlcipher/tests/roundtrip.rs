@@ -245,6 +245,26 @@ fn audit_list_limit_zero_returns_empty() {
 }
 
 #[test]
+fn audit_entries_survive_reopen() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("evault.sqlite");
+    let key = MasterKey::generate().unwrap();
+    let var_id = VarId::new_v4();
+
+    let store = SqlCipherMetadataStore::open(&path, &key).unwrap();
+    store
+        .append(&AuditEntry::for_var(var_id, AuditAction::Created))
+        .unwrap();
+    drop(store);
+
+    let reopened = SqlCipherMetadataStore::open(&path, &key).unwrap();
+    let listed = reopened.list(10).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].action(), &AuditAction::Created);
+    assert_eq!(listed[0].var_id(), Some(var_id));
+}
+
+#[test]
 fn upsert_var_idempotent_for_same_id() {
     let (_dir, store, _key) = fresh_store();
     let var = make_var("FOO", VarKind::Plain);

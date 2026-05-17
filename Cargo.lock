@@ -681,6 +681,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0a7a9bfdb35811f9e59832f0f05975114d2251b415fb534108e6f34060fd772"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1220,9 +1229,10 @@ dependencies = [
 
 [[package]]
 name = "evault-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
+ "clap_complete",
  "dirs",
  "evault-core",
  "evault-manifest",
@@ -1236,12 +1246,14 @@ dependencies = [
  "keyring-core",
  "rpassword",
  "secrecy",
+ "serde_json",
  "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]
 name = "evault-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rand 0.10.1",
  "secrecy",
@@ -1255,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "evault-manifest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "serde",
@@ -1266,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "evault-materializer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "tempfile",
@@ -1274,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "evault-runner"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "tempfile",
@@ -1282,7 +1294,7 @@ dependencies = [
 
 [[package]]
 name = "evault-scanner-regex"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "regex",
@@ -1292,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "evault-store-keyring"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "keyring",
@@ -1301,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "evault-store-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "time",
@@ -1309,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "evault-store-sqlcipher"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "rusqlite",
@@ -1323,7 +1335,7 @@ dependencies = [
 
 [[package]]
 name = "evault-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "evault-core",
  "nucleo-matcher",

@@ -15,11 +15,12 @@
 mod backend;
 mod commands;
 mod error;
+mod presentation;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use evault_core::model::{Group, Profile};
 
 use crate::backend::{BackendOps, InMemoryBackend, SqlCipherBackend};
@@ -64,6 +65,17 @@ enum Command {
     Tui,
     /// List all managed variables.
     Ls,
+    /// Show recent audit entries.
+    Audit {
+        /// Maximum number of entries to show.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Generate shell completion scripts.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
     /// Create a new variable, prompting for the value.
     Add {
         /// Variable name (must match `[A-Z_][A-Z0-9_]*`).
@@ -107,6 +119,9 @@ enum Command {
         /// Profile to resolve. Defaults to `default`.
         #[arg(long)]
         profile: Option<String>,
+        /// Write `.env.<ENVIRONMENT>` instead of `.env`.
+        #[arg(long, value_name = "ENVIRONMENT")]
+        environment: Option<String>,
     },
     /// Run a child process with the project's env injected (no `.env`
     /// is written to disk).
@@ -126,6 +141,9 @@ enum Command {
     Scan {
         /// Path to scan recursively.
         path: PathBuf,
+        /// Exit non-zero when orphaned or unused variables are found.
+        #[arg(long)]
+        ci: bool,
     },
     /// Import variables from a `.env` file (non-destructive: existing
     /// names are skipped).
@@ -144,6 +162,9 @@ enum Command {
         /// Replace secret values with `*****`.
         #[arg(long)]
         mask: bool,
+        /// Output format.
+        #[arg(long, default_value_t = commands::export::ExportFormat::Env)]
+        format: commands::export::ExportFormat,
     },
     /// Wipe the persistent backend: deletes the metadata DB file
     /// AND the master-key keyring entry. Recovery path when the DB
@@ -165,6 +186,8 @@ impl Command {
         match self {
             Self::Tui => "tui",
             Self::Ls => "ls",
+            Self::Audit { .. } => "audit",
+            Self::Completions { .. } => "completions",
             Self::Add { .. } => "add",
             Self::Rm { .. } => "rm",
             Self::Link { .. } => "link",
@@ -218,6 +241,11 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<(), CliError> {
     let command = cli.command.unwrap_or(Command::Tui);
+    if let Command::Completions { shell } = command {
+        let mut cmd = Cli::command();
+        clap_complete::generate(shell, &mut cmd, "evault", &mut std::io::stdout());
+        return Ok(());
+    }
     // `reset` MUST run before any backend open attempt — its whole
     // purpose is to recover from a state where opening the backend
     // fails. Honour --demo / --ephemeral only when they make sense
@@ -244,7 +272,11 @@ where
             evault_tui::run_tui(backend)?;
             Ok(())
         }
+        Command::Completions { .. } => {
+            unreachable!("completions is handled in run() before dispatch")
+        }
         Command::Ls => commands::ls::run(&backend),
+        Command::Audit { limit } => commands::audit::run(&backend, limit),
         Command::Add {
             name,
             secret,
@@ -257,9 +289,16 @@ where
             profile,
             alias,
         } => commands::link::run(&backend, &name, &project, parse_profile(profile), alias),
-        Command::Gen { project, profile } => {
-            commands::gen::run(&backend, &project, parse_profile(profile))
-        }
+        Command::Gen {
+            project,
+            profile,
+            environment,
+        } => commands::gen::run(
+            &backend,
+            &project,
+            parse_profile(profile),
+            environment.as_deref(),
+        ),
         Command::Run {
             project,
             profile,
@@ -282,13 +321,13 @@ where
                 _ => 1,
             });
         }
-        Command::Scan { path } => commands::scan::run(&backend, &path),
+        Command::Scan { path, ci } => commands::scan::run(&backend, &path, ci),
         Command::Import {
             path,
             secret,
             group,
         } => commands::import::run(&backend, &path, secret, parse_group(&group)),
-        Command::Export { mask } => commands::export::run(&backend, mask),
+        Command::Export { mask, format } => commands::export::run(&backend, mask, format),
         // `Reset` is intercepted in `run()` before we reach the
         // backend-open path; this arm is unreachable but kept so
         // the match is exhaustive.
