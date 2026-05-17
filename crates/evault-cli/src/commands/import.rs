@@ -8,6 +8,7 @@ use secrecy::SecretString;
 
 use crate::backend::BackendOps;
 use crate::error::CliError;
+use crate::presentation;
 
 /// Parse `.env` style key=value lines, creating missing entries in
 /// the registry. Existing entries (by name) are skipped — the
@@ -67,6 +68,11 @@ pub fn run<B: BackendOps>(
             .map_err(|e| CliError::Tui(evault_tui::TuiError::Provider(e)))?;
         created += 1;
     }
-    println!("import: {created} created, {skipped} skipped (already present)");
+    println!(
+        "{}",
+        presentation::success(format!(
+            "imported {created} variables, skipped {skipped} already present"
+        ))
+    );
     Ok(())
 }

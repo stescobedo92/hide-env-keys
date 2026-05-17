@@ -6,6 +6,7 @@ use secrecy::SecretString;
 
 use crate::backend::BackendOps;
 use crate::error::CliError;
+use crate::presentation;
 
 /// Prompt the user for a value (without echo when `--secret`) and
 /// create the variable in the backend.
@@ -38,7 +39,10 @@ pub fn run<B: BackendOps>(
     let id = backend
         .create_var(name, group, kind, SecretString::new(value.into()))
         .map_err(|e| CliError::Tui(evault_tui::TuiError::Provider(e)))?;
-    println!("created {name} ({})", id.as_uuid());
+    println!(
+        "{}",
+        presentation::success(format!("created {name} ({})", id.as_uuid()))
+    );
     Ok(())
 }
 

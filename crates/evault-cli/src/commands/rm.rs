@@ -5,6 +5,7 @@ use evault_tui::VarMutator;
 
 use crate::backend::BackendOps;
 use crate::error::CliError;
+use crate::presentation;
 
 /// Delete the variable with the given name.
 ///
@@ -29,14 +30,14 @@ pub fn run<B: BackendOps + VarMutator>(backend: &B, name: &str, yes: bool) -> Re
         })?;
 
     if !yes && !confirm_interactive(name)? {
-        println!("cancelled");
+        println!("{}", presentation::warning("cancelled"));
         return Ok(());
     }
 
     backend
         .delete(var.id())
         .map_err(|e| CliError::Tui(evault_tui::TuiError::Provider(e)))?;
-    println!("deleted {name}");
+    println!("{}", presentation::success(format!("deleted {name}")));
     Ok(())
 }
 

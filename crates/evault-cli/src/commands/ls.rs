@@ -4,6 +4,7 @@ use evault_core::model::VarKind;
 use evault_tui::VarProvider;
 
 use crate::error::CliError;
+use crate::presentation;
 
 /// Print every variable in the registry, sorted by name, as a fixed-
 /// width table:
@@ -28,7 +29,10 @@ pub fn run<B: VarProvider>(backend: &B) -> Result<(), CliError> {
         .list()
         .map_err(|e| CliError::Tui(evault_tui::TuiError::Provider(e)))?;
     if rows.is_empty() {
-        println!("evault: no variables yet. `evault add NAME` to create one.");
+        println!(
+            "{}",
+            presentation::muted("no variables yet. `evault add NAME` to create one.")
+        );
         return Ok(());
     }
 
@@ -44,7 +48,11 @@ pub fn run<B: VarProvider>(backend: &B) -> Result<(), CliError> {
 
     println!(
         "{:<name_w$}  {:<group_w$}  {:<6}  {:>4}  {:>4}  UPDATED (UTC)",
-        "NAME", "GROUP", "KIND", "LEN", "PROJ",
+        presentation::accent("NAME"),
+        presentation::accent("GROUP"),
+        presentation::accent("KIND"),
+        presentation::accent("LEN"),
+        presentation::accent("PROJ"),
     );
     for row in &rows {
         let kind = match row.kind {

@@ -33,6 +33,7 @@ use crate::error::CliError;
 pub fn run<B: BackendOps + evault_tui::VarProvider>(
     backend: &B,
     path: &Path,
+    ci: bool,
 ) -> Result<(), CliError> {
     let scanner = RegexCodeScanner::new();
     let hits = scanner
@@ -48,17 +49,7 @@ pub fn run<B: BackendOps + evault_tui::VarProvider>(
             .push(format!("{}:{}", hit.path.display(), hit.line));
     }
 
-    // Registry side.
-    let registry_vars: BTreeSet<String> = backend
-        .list_projects()
-        .map_err(|_| ())
-        .into_iter()
-        .flatten()
-        .map(|_| String::new())
-        .collect::<BTreeSet<_>>(); // placeholder — see below
-
-    // Use BackendOps::summarise indirectly via find_var_by_name —
-    // simpler: query each unique name and check existence.
+    // Query each unique referenced name and check existence.
     let referenced: BTreeSet<&str> = hits_by_name.keys().map(String::as_str).collect();
     let mut orphans: Vec<&str> = Vec::new();
     let mut matched: Vec<&str> = Vec::new();
@@ -74,11 +65,8 @@ pub fn run<B: BackendOps + evault_tui::VarProvider>(
         }
     }
 
-    // Unused: registry names not in `referenced`. We approximate by
-    // probing find_var_by_name for each match candidate above — for
-    // a full report we'd want list_vars. The backend exposes that
-    // via VarProvider::list; reuse here.
-    let _ = registry_vars; // silence the placeholder; see follow-up
+    // Unused: registry names not in `referenced`. BackendOps doesn't expose
+    // list directly; VarProvider does, so reuse that dashboard-facing shape.
     let all_registry_names: BTreeSet<String> = {
         // Round-trip through VarProvider (BackendOps doesn't expose
         // list directly — it lives on VarProvider).
@@ -124,6 +112,14 @@ pub fn run<B: BackendOps + evault_tui::VarProvider>(
                 .unwrap_or_default();
             println!("  {name}  {locations}");
         }
+    }
+
+    if ci && (!orphans.is_empty() || !unused.is_empty()) {
+        return Err(CliError::Io(std::io::Error::other(format!(
+            "scan --ci found {} orphaned and {} unused variables",
+            orphans.len(),
+            unused.len()
+        ))));
     }
 
     Ok(())

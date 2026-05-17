@@ -16,6 +16,7 @@ use evault_manifest::FileManifestIo;
 
 use crate::backend::BackendOps;
 use crate::error::CliError;
+use crate::presentation;
 
 /// Manifest filename inside the project root.
 const MANIFEST_FILENAME: &str = "evault.toml";
@@ -103,10 +104,13 @@ pub fn run<B: BackendOps>(
         .map_err(|e| CliError::Io(std::io::Error::other(format!("manifest save: {e}"))))?;
 
     println!(
-        "linked {} -> {} ({})",
-        var.name(),
-        project_path.display(),
-        manifest_path.display(),
+        "{}",
+        presentation::success(format!(
+            "linked {} -> {} ({})",
+            var.name(),
+            project_path.display(),
+            manifest_path.display(),
+        ))
     );
     Ok(())
 }
