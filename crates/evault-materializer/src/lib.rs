@@ -49,5 +49,7 @@
 
 mod env_file;
 mod gitignore;
+mod target;
 
 pub use env_file::EnvFileMaterializer;
+pub use target::{env_file_path, validate_environment_label};
