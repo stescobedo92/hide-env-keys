@@ -18,7 +18,9 @@ npm install --save-dev evault-cli
 npx evault
 ```
 
-The post-install hook downloads the platform-specific pre-built binary from the matching GitHub Release and verifies its SHA256 checksum. Supported platforms:
+The package uses npm `optionalDependencies` for platform binaries. The wrapper
+resolves the matching optional package at runtime; no network download or script
+runs during `npm install`. Supported platforms:
 
 | Platform | Architectures |
 |---|---|
@@ -58,15 +60,19 @@ See the [main repository README](https://github.com/stescobedo92/hide-env-keys/b
 After install, the native binary is at:
 
 ```
-node_modules/evault-cli/bin/evault          (macOS / Linux)
-node_modules/evault-cli/bin/evault.exe      (Windows)
+node_modules/@evault-cli/darwin-x64/bin/evault
+node_modules/@evault-cli/darwin-arm64/bin/evault
+node_modules/@evault-cli/linux-x64/bin/evault
+node_modules/@evault-cli/win32-x64/bin/evault.exe
 ```
 
 ## Troubleshooting
 
-**`evault: binary not found at .../bin/evault`** — the postinstall step failed. Re-run it with `npm rebuild evault-cli`. If your platform is supported but the download still fails, set `EVAULT_SKIP_POSTINSTALL=1` and install from source: `cargo install evault-cli`.
+**`optional package ... is not installed`** — reinstall with optional dependencies enabled. Avoid `--omit=optional` for this package, or install from source with `cargo install evault-cli`.
 
-**Checksum mismatch** — the downloaded archive does not match the published SHA256. Open an issue at [github.com/stescobedo92/hide-env-keys/issues](https://github.com/stescobedo92/hide-env-keys/issues).
+**`unsupported platform ...`** — the npm package does not currently ship a pre-built binary for that OS/CPU pair. Install from source with `cargo install evault-cli`.
+
+**`platform package is installed but binary is missing`** — the platform package publish is incomplete. Open an issue at [github.com/stescobedo92/hide-env-keys/issues](https://github.com/stescobedo92/hide-env-keys/issues).
 
 ## License
 

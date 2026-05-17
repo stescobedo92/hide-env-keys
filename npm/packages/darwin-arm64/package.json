@@ -1,0 +1,16 @@
+{
+  "name": "@evault-cli/darwin-arm64",
+  "version": "0.1.1",
+  "description": "macOS arm64 binary for evault-cli.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stescobedo92/hide-env-keys.git"
+  },
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/", "README.md", "LICENSE"],
+  "bin": {
+    "evault": "bin/evault"
+  }
+}

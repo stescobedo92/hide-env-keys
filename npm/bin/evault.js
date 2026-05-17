@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Wrapper that execs the platform-specific `evault` binary placed
-// alongside this script by `install.js`. The wrapper preserves the
-// process's stdio, exit code, and signal forwarding so the user
-// experiences `evault` as a transparent passthrough.
+// Wrapper that execs the platform-specific `evault` binary provided by an
+// optional dependency package. The wrapper preserves stdio, exit code, and
+// signal forwarding so users experience `evault` as a transparent passthrough.
 
 "use strict";
 
@@ -11,18 +10,51 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const BIN_NAME = process.platform === "win32" ? "evault.exe" : "evault";
-const BIN_PATH = path.join(__dirname, BIN_NAME);
+const PACKAGE_BY_PLATFORM = {
+  "darwin-arm64": "@evault-cli/darwin-arm64",
+  "darwin-x64": "@evault-cli/darwin-x64",
+  "linux-x64": "@evault-cli/linux-x64",
+  "win32-x64": "@evault-cli/win32-x64",
+};
 
-if (!fs.existsSync(BIN_PATH)) {
+function resolveBinary() {
+  const key = `${process.platform}-${process.arch}`;
+  const packageName = PACKAGE_BY_PLATFORM[key];
+  if (!packageName) {
+    throw new Error(
+      `unsupported platform ${key}. Supported platforms: ${Object.keys(
+        PACKAGE_BY_PLATFORM
+      ).join(", ")}`
+    );
+  }
+  let packageJson;
+  try {
+    packageJson = require.resolve(`${packageName}/package.json`);
+  } catch (_err) {
+    throw new Error(
+      `optional package ${packageName} is not installed. Reinstall with optional dependencies enabled, or install from source with \`cargo install evault-cli\`.`
+    );
+  }
+  return path.join(path.dirname(packageJson), "bin", BIN_NAME);
+}
+
+let binPath;
+try {
+  binPath = resolveBinary();
+} catch (err) {
+  console.error(`evault: ${err.message}`);
+  process.exit(1);
+}
+
+if (!fs.existsSync(binPath)) {
   console.error(
-    `evault: binary not found at ${BIN_PATH}.\n` +
-      `The postinstall step may have failed — try \`npm rebuild evault\`,\n` +
-      `or install from source: \`cargo install evault-cli\`.`
+    `evault: platform package is installed but binary is missing at ${binPath}.\n` +
+      `Reinstall the package, or install from source with \`cargo install evault-cli\`.`
   );
   process.exit(1);
 }
 
-const child = spawn(BIN_PATH, process.argv.slice(2), {
+const child = spawn(binPath, process.argv.slice(2), {
   stdio: "inherit",
   // The Rust binary owns the terminal lifecycle (raw mode, alternate
   // screen). Passing the parent stdio through unchanged is essential

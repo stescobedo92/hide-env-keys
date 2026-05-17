@@ -1,11 +1,9 @@
 name: Publish npm
 
 # Triggered after the Release workflow publishes the GitHub Release
-# containing the per-platform binaries. The npm postinstall script
-# downloads those binaries from the matching GitHub Release at
-# `npm install` time, so the Release MUST exist before this workflow
-# publishes — a user running `npm install evault-cli` against a
-# half-finished release would 404.
+# containing the per-platform binaries. The npm package uses
+# optionalDependencies for per-platform packages, so the Release MUST exist
+# before this workflow publishes those packages.
 #
 # Two trigger modes:
 #
@@ -126,31 +124,105 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Sync npm package version to tag
+      - name: Sync npm package versions to tag
         working-directory: npm
         shell: bash
         run: |
           set -euo pipefail
-          # The release tag is the source of truth. Rewrite
-          # `npm/package.json` so the `version` field matches the tag.
-          # `--no-git-tag-version` so npm does NOT try to create a tag
-          # in the workflow's read-only checkout. `--allow-same-version`
-          # so re-running against an already-bumped checkout is a no-op
-          # rather than an error.
-          npm version "${{ steps.resolve.outputs.version }}" \
-            --no-git-tag-version --allow-same-version
+          version="${{ steps.resolve.outputs.version }}"
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const version = process.env.VERSION;
+          const root = process.cwd();
+          const mainPath = path.join(root, "package.json");
+          const main = JSON.parse(fs.readFileSync(mainPath, "utf8"));
+          main.version = version;
+          for (const name of Object.keys(main.optionalDependencies || {})) {
+            main.optionalDependencies[name] = version;
+          }
+          fs.writeFileSync(mainPath, `${JSON.stringify(main, null, 2)}\n`);
+
+          for (const dir of fs.readdirSync(path.join(root, "packages"))) {
+            const pkgPath = path.join(root, "packages", dir, "package.json");
+            if (!fs.existsSync(pkgPath)) continue;
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+            pkg.version = version;
+            fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+          }
+          NODE
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+
+      - name: Download GitHub Release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "v${{ steps.resolve.outputs.version }}" \
+            --dir dist \
+            --pattern "evault-v${{ steps.resolve.outputs.version }}-*"
+          ls -lah dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Stage platform package binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.resolve.outputs.version }}"
+
+          stage_unix() {
+            package_dir="$1"
+            target="$2"
+            mkdir -p "npm/packages/${package_dir}/bin"
+            tar -xJf "dist/evault-v${version}-${target}.tar.xz" -C "npm/packages/${package_dir}/bin" evault
+            chmod 0755 "npm/packages/${package_dir}/bin/evault"
+            cp npm/packages/README.md "npm/packages/${package_dir}/README.md"
+            cp LICENSE "npm/packages/${package_dir}/LICENSE"
+          }
+
+          stage_windows() {
+            package_dir="$1"
+            target="$2"
+            mkdir -p "npm/packages/${package_dir}/bin"
+            tmp="$(mktemp -d)"
+            unzip -q "dist/evault-v${version}-${target}.zip" -d "$tmp"
+            cp "$tmp/evault.exe" "npm/packages/${package_dir}/bin/evault.exe"
+            cp npm/packages/README.md "npm/packages/${package_dir}/README.md"
+            cp LICENSE "npm/packages/${package_dir}/LICENSE"
+          }
+
+          stage_unix linux-x64 x86_64-unknown-linux-gnu
+          stage_unix darwin-x64 x86_64-apple-darwin
+          stage_unix darwin-arm64 aarch64-apple-darwin
+          stage_windows win32-x64 x86_64-pc-windows-msvc
 
       - name: Sanity check the package contents
         working-directory: npm
-        run: npm pack --dry-run
-        env:
-          # Skip the postinstall during the pack/publish step itself;
-          # it would try to download binaries we may have just built.
-          EVAULT_SKIP_POSTINSTALL: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in packages/*; do
+            if [[ -f "$dir/package.json" ]]; then
+              (cd "$dir" && npm pack --dry-run)
+            fi
+          done
+          npm pack --dry-run
 
-      - name: Publish to npm
+      - name: Publish platform packages to npm
+        working-directory: npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in packages/linux-x64 packages/darwin-x64 packages/darwin-arm64 packages/win32-x64; do
+            (cd "$dir" && npm publish --access public --provenance)
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish wrapper to npm
         working-directory: npm
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          EVAULT_SKIP_POSTINSTALL: "1"

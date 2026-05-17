@@ -31,13 +31,14 @@
   },
   "files": [
     "bin/evault.js",
-    "bin/install.js",
     "README.md",
     "LICENSE"
   ],
-  "scripts": {
-    "postinstall": "node bin/install.js",
-    "preuninstall": "node bin/install.js --uninstall || true"
+  "optionalDependencies": {
+    "@evault-cli/darwin-arm64": "0.1.1",
+    "@evault-cli/darwin-x64": "0.1.1",
+    "@evault-cli/linux-x64": "0.1.1",
+    "@evault-cli/win32-x64": "0.1.1"
   },
   "engines": {
     "node": ">=16"
