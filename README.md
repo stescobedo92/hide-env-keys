@@ -42,6 +42,14 @@ Available targets:
 | macOS Intel | `evault-<version>-x86_64-apple-darwin.tar.xz` |
 | macOS Apple Silicon | `evault-<version>-aarch64-apple-darwin.tar.xz` |
 
+### Release versioning
+
+Release tags are the source of truth for package versions. Tag names must follow
+SemVer as `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-prerelease`; release
+workflows strip the leading `v`, sync Cargo and npm package metadata with
+`scripts/sync-release-version.mjs`, refresh `Cargo.lock` for crates.io
+publishing, and then publish the crates in dependency order.
+
 ### From source
 
 Requires Rust 1.94+ (workspace toolchain is pinned in [`rust-toolchain.toml`](rust-toolchain.toml); `rustup` will pick it up automatically).
@@ -85,14 +93,16 @@ In the TUI:
 | `v` | View decrypted value of selected var in a modal |
 | `R` | **Run a command in a project with env injected** (see [below](#run-commands-inside-the-tui)) |
 | `s` | Toggle secret visibility (mask / show) |
-| `y` | Copy value to clipboard *(not yet wired)* |
+| `y` | Copy value to clipboard and record an audit event |
 | `Ctrl+F` | Open fuzzy filter (`nucleo-matcher`) |
-| `p` | Switch active profile *(not yet wired)* |
-| `Tab` | Next top-level view |
+| `p` | Switch active profile for link / run defaults |
+| `Tab` | Toggle Dashboard / Audit view |
 | `r` | Refresh from backend |
 | `?` | Help overlay |
 | `Esc` | Cascade: error modal → toast → filter → detail → help → quit |
 | `q` / `Ctrl+C` | Quit cleanly |
+| Mouse wheel | Move selection |
+| Left click | Select a dashboard row |
 
 Failed actions (invalid name, missing project, spawn errors, …) surface in a centered **error modal** with a plain-English hint explaining what went wrong and how to fix it. Press `Enter` or `Esc` to acknowledge.
 
@@ -171,6 +181,35 @@ evault export --mask
 evault reset
 evault reset -y
 ```
+
+#### Command examples with output
+
+Every output example below is representative; ids, timestamps, paths, and
+counts vary by machine. Secret values are never printed unless you explicitly
+export without `--mask`.
+
+| Command | Example output |
+|---|---|
+| `evault` | Opens the interactive TUI dashboard. |
+| `evault --demo` | Opens the TUI with 10 ephemeral sample variables. |
+| `evault tui` | Opens the same interactive TUI as the default command. |
+| `evault ls` | `NAME            GROUP     KIND    LEN    PROJ    UPDATED (UTC)`<br>`DATABASE_URL    user      secret  42     1       2026-05-17 14:02` |
+| `evault audit --limit 3` | `TIME (UTC)                      ACTION    VAR                                   PROJECT`<br>`2026-05-17T14:08:21.123456789Z  copied    2f4a1c9e-7b0d-4d12-9c0f-2b6a8f2e9a10  -` |
+| `evault doctor` | `evault doctor`<br>`  sqlcipher: WARN disabled (SQLite bundle only)`<br>`  keyring:   OK available` |
+| `evault completions powershell` | `using namespace System.Management.Automation`<br>`Register-ArgumentCompleter -Native -CommandName 'evault' ...` |
+| `evault add API_KEY --secret` | `value (will not echo):`<br>`OK created API_KEY (2f4a1c9e-7b0d-4d12-9c0f-2b6a8f2e9a10)` |
+| `evault rm API_KEY -y` | `OK deleted API_KEY` |
+| `evault link DATABASE_URL --project ./api --profile staging --alias DB_URL` | `OK linked DATABASE_URL -> C:\work\api (C:\work\api\evault.toml)` |
+| `evault unlink DATABASE_URL --project ./api --profile staging --key DB_URL` | `OK unlinked DATABASE_URL from C:\work\api (manifest bindings removed: 1)` |
+| `evault diff --project ./api --profile staging --environment Staging` | `evault diff`<br>`  profile:      staging`<br>`inline bindings`<br>`  NODE_ENV`<br>`OK manifest and registry agree` |
+| `evault gen --project ./api --profile staging --environment Staging` | `OK wrote C:\work\api\.env.Staging (4 variables)` |
+| `evault run --project ./api --profile staging -- npm test` | Child command output is streamed directly.<br>`test result: ok` |
+| `evault scan ./api` | `ORPHANS  (referenced in code but missing from registry)`<br>`  STRIPE_KEY  src/payments.ts:12`<br>`REFERENCED (in code AND registry)`<br>`  DATABASE_URL  src/db.ts:3` |
+| `evault scan ./api --ci` | Same report as `scan`; exits non-zero when orphaned or unused variables exist. |
+| `evault import ./api/.env --secret --group project` | `OK imported 6 variables, skipped 2 already present` |
+| `evault export --mask` | `API_KEY=*****`<br>`NODE_ENV=development` |
+| `evault export --format json --mask` | `[`<br>`  {`<br>`    "name": "API_KEY",`<br>`    "group": "user",`<br>`    "kind": "secret",`<br>`    "value": "*****"`<br>`  }`<br>`]` |
+| `evault reset -y` | `resetting evault persistent state`<br>`database: removed C:\Users\you\AppData\Local\evault\evault.db`<br>`keyring: removed master key`<br>`done. Re-run evault to create a fresh vault.` |
 
 Every subcommand except `reset` also accepts `--demo` / `--ephemeral` if you want to try it without touching your real keyring or DB:
 
