@@ -1,5 +1,5 @@
 {
-  "name": "@evault-cli/linux-x64",
+  "name": "evault-cli-linux-x64",
   "version": "0.1.1",
   "description": "Linux x64 binary for evault-cli.",
   "license": "MIT",

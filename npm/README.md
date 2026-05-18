@@ -60,10 +60,10 @@ See the [main repository README](https://github.com/stescobedo92/hide-env-keys/b
 After install, the native binary is at:
 
 ```
-node_modules/@evault-cli/darwin-x64/bin/evault
-node_modules/@evault-cli/darwin-arm64/bin/evault
-node_modules/@evault-cli/linux-x64/bin/evault
-node_modules/@evault-cli/win32-x64/bin/evault.exe
+node_modules/evault-cli-darwin-x64/bin/evault
+node_modules/evault-cli-darwin-arm64/bin/evault
+node_modules/evault-cli-linux-x64/bin/evault
+node_modules/evault-cli-win32-x64/bin/evault.exe
 ```
 
 ## Troubleshooting

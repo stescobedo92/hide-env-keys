@@ -11,10 +11,10 @@ const { spawn } = require("child_process");
 
 const BIN_NAME = process.platform === "win32" ? "evault.exe" : "evault";
 const PACKAGE_BY_PLATFORM = {
-  "darwin-arm64": "@evault-cli/darwin-arm64",
-  "darwin-x64": "@evault-cli/darwin-x64",
-  "linux-x64": "@evault-cli/linux-x64",
-  "win32-x64": "@evault-cli/win32-x64",
+  "darwin-arm64": "evault-cli-darwin-arm64",
+  "darwin-x64": "evault-cli-darwin-x64",
+  "linux-x64": "evault-cli-linux-x64",
+  "win32-x64": "evault-cli-win32-x64",
 };
 
 function resolveBinary() {

@@ -1,5 +1,5 @@
 {
-  "name": "@evault-cli/darwin-x64",
+  "name": "evault-cli-darwin-x64",
   "version": "0.1.1",
   "description": "macOS x64 binary for evault-cli.",
   "license": "MIT",
