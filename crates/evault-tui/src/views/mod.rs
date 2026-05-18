@@ -25,45 +25,19 @@ use crate::theme::Theme;
 /// bar, and (when active) any modal overlays.
 pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     let area = frame.area();
-
-    // Layout, top-down:
-    //   - body (dashboard / detail)             — flexible (`Min(1)`)
-    //   - toast (1 row, only when active)
-    //   - keybindings hint bar (`HEIGHT` rows, always)
-    //   - status bar (1 row, always)
-    //
-    // Fuzzy filter is NOT in this layout — it pops up as a centered
-    // modal (see further down) so it doesn't compete with the
-    // keybindings strip for bottom screen space.
     let show_toast = app.toast_text().is_some();
-
-    let mut constraints: Vec<Constraint> = vec![Constraint::Min(1)];
-    if show_toast {
-        constraints.push(Constraint::Length(1));
-    }
-    constraints.push(Constraint::Length(keybindings::HEIGHT));
-    constraints.push(Constraint::Length(1)); // status bar
-
-    let regions = Layout::vertical(constraints).split(area);
-    let Some(&body) = regions.first() else { return };
-    let Some(&status) = regions.last() else {
-        return;
-    };
-    let keybindings_idx = regions.len().saturating_sub(2);
-    let Some(&keybindings_rect) = regions.get(keybindings_idx) else {
-        return;
-    };
+    let regions = layout_regions(area, show_toast);
 
     match app.current_view() {
-        View::Dashboard => dashboard::render(frame, body, app, theme),
-        View::Detail => detail::render(frame, body, app, theme),
-        View::Audit => audit::render(frame, body, app, theme),
+        View::Dashboard => dashboard::render(frame, regions.body, app, theme),
+        View::Detail => detail::render(frame, regions.body, app, theme),
+        View::Audit => audit::render(frame, regions.body, app, theme),
     }
-    keybindings::render(frame, keybindings_rect, app, theme);
-    statusbar::render(frame, status, app, theme);
+    statusbar::render(frame, regions.status, app, theme);
+    keybindings::render(frame, regions.keybindings, app, theme);
 
     if show_toast {
-        if let Some(&r) = regions.get(1) {
+        if let Some(r) = regions.toast {
             toast::render(frame, r, app, theme);
         }
     }
@@ -116,6 +90,41 @@ pub fn render(frame: &mut Frame<'_>, app: &mut AppState, theme: &Theme) {
     // multi-line hint with bullets fits comfortably.
     if app.is_error_modal_visible() {
         error_modal::render(frame, centered(area, 60, 50), app, theme);
+    }
+}
+
+pub struct UiRegions {
+    pub status: Rect,
+    pub body: Rect,
+    pub toast: Option<Rect>,
+    pub keybindings: Rect,
+}
+
+/// Layout shared by rendering and mouse hit-testing.
+///
+/// Top status is deliberately outside the bottom keybinding strip so the
+/// context line does not visually collide with shortcuts.
+pub fn layout_regions(area: Rect, show_toast: bool) -> UiRegions {
+    let mut constraints: Vec<Constraint> = vec![Constraint::Length(1), Constraint::Min(1)];
+    if show_toast {
+        constraints.push(Constraint::Length(1));
+    }
+    constraints.push(Constraint::Length(keybindings::HEIGHT));
+
+    let regions = Layout::vertical(constraints).split(area);
+    let status = regions[0];
+    let body = regions[1];
+    let toast = if show_toast {
+        regions.get(2).copied()
+    } else {
+        None
+    };
+    let keybindings = *regions.last().unwrap_or(&area);
+    UiRegions {
+        status,
+        body,
+        toast,
+        keybindings,
     }
 }
 

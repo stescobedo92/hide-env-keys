@@ -4,7 +4,10 @@ use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Rect;
 use ratatui::DefaultTerminal;
 use secrecy::ExposeSecret;
 
@@ -104,6 +107,10 @@ where
     B: VarProvider + VarMutator + AuditProvider,
 {
     let mut terminal = ratatui::try_init()?;
+    if let Err(e) = enable_mouse_capture() {
+        let _ = ratatui::try_restore();
+        return Err(TuiError::Terminal(e));
+    }
     let loop_result = event_loop(&mut terminal, &backend);
 
     // ALWAYS attempt to restore. The restore-error precedence policy
@@ -112,7 +119,7 @@ where
     // mode is presumably broken anyway, so the print will reach the
     // user's reset shell) and propagate the *original* loop error so
     // the user sees the real cause.
-    match (loop_result, ratatui::try_restore()) {
+    match (loop_result, restore_terminal()) {
         (Ok(()), Ok(())) => Ok(()),
         (Ok(()), Err(restore_err)) => Err(TuiError::Terminal(restore_err)),
         (Err(loop_err), Ok(())) => Err(loop_err),
@@ -127,6 +134,16 @@ where
             Err(loop_err)
         }
     }
+}
+
+fn enable_mouse_capture() -> io::Result<()> {
+    ratatui::crossterm::execute!(io::stdout(), EnableMouseCapture)
+}
+
+fn restore_terminal() -> io::Result<()> {
+    let mouse = ratatui::crossterm::execute!(io::stdout(), DisableMouseCapture);
+    let restore = ratatui::try_restore();
+    mouse.and(restore)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -338,7 +355,7 @@ where
                     // the child returns. `try_restore` failures are
                     // surfaced — without them, the child would print
                     // into the alternate buffer and never appear.
-                    if let Err(e) = ratatui::try_restore() {
+                    if let Err(e) = restore_terminal() {
                         app.show_error_modal(
                             "run failed",
                             format!("could not restore the terminal before spawning: {e}"),
@@ -359,6 +376,14 @@ where
                     // the user stranded in a half-cooked terminal —
                     // bail out hard so the panic-restore path runs.
                     *terminal = ratatui::try_init().map_err(TuiError::Terminal)?;
+                    if let Err(e) = enable_mouse_capture() {
+                        app.show_error_modal(
+                            "run failed",
+                            format!("could not re-enable mouse capture after spawning: {e}"),
+                            None,
+                        );
+                        continue;
+                    }
                     match outcome {
                         Err(_) => {
                             app.show_error_modal(
@@ -560,13 +585,35 @@ where
             // Resize: the loop redraws on every iteration anyway, so
             // the new dimensions are picked up on the next `draw()`.
             Event::Resize(_, _) => {}
-            // Mouse, focus, paste, etc. — not yet bound. Phase 2
-            // will wire mouse selection and paste-into-editor.
+            Event::Mouse(mouse) => handle_mouse_event(&mut app, mouse),
+            // Focus, paste, etc. are not currently bound.
             _ => {}
         }
     }
 
     Ok(())
+}
+
+fn handle_mouse_event(app: &mut AppState, mouse: MouseEvent) {
+    match mouse.kind {
+        MouseEventKind::ScrollDown => app.apply(crate::Action::MoveDown),
+        MouseEventKind::ScrollUp => app.apply(crate::Action::MoveUp),
+        MouseEventKind::Down(MouseButton::Left) => {
+            if !matches!(app.current_view(), View::Dashboard) {
+                return;
+            }
+            let Ok((width, height)) = ratatui::crossterm::terminal::size() else {
+                return;
+            };
+            let area = Rect::new(0, 0, width, height);
+            let regions = views::layout_regions(area, app.toast_text().is_some());
+            let Some(index) = views::dashboard::row_index_at(regions.body, mouse.row) else {
+                return;
+            };
+            app.select_visible_index(index);
+        }
+        _ => {}
+    }
 }
 
 /// Contextual hint for a failed `create` action.

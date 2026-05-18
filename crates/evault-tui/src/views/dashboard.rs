@@ -1,9 +1,10 @@
 //! Dashboard table: one row per variable.
 
 use evault_core::model::VarKind;
-use ratatui::layout::{Constraint, Rect};
-use ratatui::text::Span;
-use ratatui::widgets::{Block, Cell, Row, Table};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 use time::OffsetDateTime;
 
@@ -12,6 +13,10 @@ use crate::provider::VarSummary;
 use crate::theme::Theme;
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, theme: &Theme) {
+    let [summary_area, table_area] =
+        Layout::vertical([Constraint::Length(SUMMARY_HEIGHT), Constraint::Min(1)]).areas(area);
+    render_summary(frame, summary_area, app, theme);
+
     // Column header explicitly notes the timezone so the UPDATED
     // values cannot be mistaken for local time. Display values come
     // straight from the underlying `OffsetDateTime` without
@@ -49,18 +54,94 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &mut AppState, theme: &The
     ];
 
     let title = if visible_count == total_rows {
-        format!(" vars ({total_rows}) ")
+        format!(" variables ({total_rows}) ")
     } else {
-        format!(" vars ({visible_count}/{total_rows}) ")
+        format!(" variables ({visible_count}/{total_rows}) ")
     };
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::bordered().title(title))
+        .block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::new().fg(theme.dim))
+                .title(title)
+                .title_alignment(Alignment::Center),
+        )
         .column_spacing(1)
         .row_highlight_style(theme.selected_row())
-        .highlight_symbol("> ");
+        .highlight_symbol("▌ ");
 
-    frame.render_stateful_widget(table, area, app.table_state_mut());
+    frame.render_stateful_widget(table, table_area, app.table_state_mut());
+}
+
+const SUMMARY_HEIGHT: u16 = 3;
+
+/// Map a terminal row coordinate to the visible dashboard row underneath it.
+pub fn row_index_at(area: Rect, mouse_y: u16) -> Option<usize> {
+    let table_y = area.y.saturating_add(SUMMARY_HEIGHT);
+    // Border top + header + bottom margin. This mirrors the table definition
+    // above and keeps mouse hit-testing aligned with rendered rows.
+    let first_row_y = table_y.saturating_add(3);
+    if mouse_y < first_row_y {
+        return None;
+    }
+    Some(usize::from(mouse_y - first_row_y))
+}
+
+fn render_summary(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) {
+    if area.height == 0 {
+        return;
+    }
+    let total = app.rows().len();
+    let visible = app.visible_row_indices().len();
+    let secrets = app
+        .rows()
+        .iter()
+        .filter(|row| matches!(row.kind, VarKind::Secret))
+        .count();
+    let plain = total.saturating_sub(secrets);
+    let linked: usize = app.rows().iter().map(|row| row.linked_projects).sum();
+    let filter_text = app
+        .filter_needle()
+        .filter(|needle| !needle.is_empty())
+        .map_or_else(
+            || "filter none".to_owned(),
+            |needle| format!("filter {needle}"),
+        );
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(theme.dim))
+        .title(" overview ")
+        .title_alignment(Alignment::Center);
+    let line = Line::from(vec![
+        metric("visible", &format!("{visible}/{total}"), theme),
+        sep(theme),
+        metric("secret", &secrets.to_string(), theme),
+        sep(theme),
+        metric("plain", &plain.to_string(), theme),
+        sep(theme),
+        metric("links", &linked.to_string(), theme),
+        sep(theme),
+        Span::styled(filter_text, theme.dim_cell()),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line)
+            .block(block)
+            .alignment(Alignment::Center),
+        area,
+    );
+}
+
+fn metric(label: &'static str, value: &str, theme: &Theme) -> Span<'static> {
+    Span::styled(
+        format!("{label} {value}"),
+        Style::new().fg(theme.accent).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn sep(theme: &Theme) -> Span<'static> {
+    Span::styled("  •  ", theme.dim_cell())
 }
 
 fn build_row(v: &VarSummary, secrets_visible: bool, theme: &Theme) -> Row<'static> {
@@ -119,6 +200,15 @@ mod tests {
     fn date_format_zero_pads_single_digit_components() {
         let t = datetime!(2026-01-02 03:04 UTC);
         assert_eq!(format_short_date(t), "2026-01-02 03:04");
+    }
+
+    #[test]
+    fn row_index_hit_testing_accounts_for_summary_and_table_header() {
+        let area = Rect::new(0, 1, 80, 20);
+        assert_eq!(row_index_at(area, 1), None);
+        assert_eq!(row_index_at(area, 6), None);
+        assert_eq!(row_index_at(area, 7), Some(0));
+        assert_eq!(row_index_at(area, 9), Some(2));
     }
 
     fn secret_row(name: &str) -> VarSummary {

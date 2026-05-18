@@ -1572,6 +1572,16 @@ impl AppState {
         &mut self.table_state
     }
 
+    /// Select a row by visible dashboard index.
+    ///
+    /// Used by mouse support. The index is in the same coordinate space as
+    /// [`Self::visible_rows`], so active filters are respected.
+    pub fn select_visible_index(&mut self, index: usize) {
+        if index < self.visible_len() {
+            self.table_state.select(Some(index));
+        }
+    }
+
     /// Whether the help overlay is currently visible.
     #[must_use]
     pub const fn help_visible(&self) -> bool {

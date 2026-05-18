@@ -1,6 +1,6 @@
-//! One-line status bar pinned to the bottom of the dashboard.
+//! Centered session header.
 
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -25,15 +25,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &AppState, theme: &Theme) 
     };
 
     let line = Line::from(vec![
-        Span::styled(" evault ", key_style),
-        Span::styled("\u{2022} ", dim),
+        Span::styled("evault ", key_style),
+        Span::styled("• ", dim),
         Span::styled(format!("{view_name} "), dim),
-        Span::styled("\u{2022} ", dim),
-        Span::styled(format!("rows: {} ", app.rows().len()), dim),
-        Span::styled("\u{2022} ", dim),
-        Span::styled(format!("profile: {} ", app.active_profile()), dim),
-        Span::styled("\u{2022} ", dim),
+        Span::styled("• ", dim),
+        Span::styled(format!("rows {} ", app.rows().len()), dim),
+        Span::styled("• ", dim),
+        Span::styled(format!("profile {} ", app.active_profile()), dim),
+        Span::styled("• ", dim),
         Span::styled(format!("secrets: {secrets_marker}"), dim),
     ]);
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
 }
