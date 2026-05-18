@@ -57,6 +57,42 @@ jobs:
             exit 1
           fi
 
+      - name: Verify crate readmes and repository metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_repo="https://github.com/stescobedo92/hide-env-keys"
+          crates=(
+            evault-core
+            evault-store-memory
+            evault-store-keyring
+            evault-store-sqlcipher
+            evault-manifest
+            evault-materializer
+            evault-runner
+            evault-scanner-regex
+            evault-tui
+            evault-cli
+          )
+          for crate in "${crates[@]}"; do
+            repo=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .repository')
+            readme=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .readme')
+            if [[ "$repo" != "$expected_repo" ]]; then
+              echo "::error::$crate repository is '$repo', expected '$expected_repo'"
+              exit 1
+            fi
+            if [[ "$readme" != */README.md ]]; then
+              echo "::error::$crate readme metadata is '$readme', expected README.md"
+              exit 1
+            fi
+            if ! cargo package -p "$crate" --allow-dirty --no-verify --list | grep -qx "README.md"; then
+              echo "::error::$crate package does not include README.md"
+              exit 1
+            fi
+          done
+
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

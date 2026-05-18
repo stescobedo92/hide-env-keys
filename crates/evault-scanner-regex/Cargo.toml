@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
 description = "Regex-based source-code scanner for environment-variable usage."
