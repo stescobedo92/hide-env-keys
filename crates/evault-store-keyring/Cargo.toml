@@ -15,6 +15,6 @@ description = "OS keyring-backed secret store for evault."
 workspace = true
 
 [dependencies]
-evault-core = { path = "../evault-core", version = "0.1" }
+evault-core = { path = "../evault-core", version = "0.1.1" }
 keyring = "4"
 keyring-core = "1"

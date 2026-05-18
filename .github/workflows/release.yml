@@ -30,6 +30,9 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Sync version from tag
+        shell: bash
+        run: node scripts/sync-release-version.mjs "${GITHUB_REF_NAME#v}"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94"
@@ -84,6 +87,9 @@ jobs:
             archive: tar.xz
     steps:
       - uses: actions/checkout@v4
+      - name: Sync version from tag
+        shell: bash
+        run: node scripts/sync-release-version.mjs "${GITHUB_REF_NAME#v}"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.94"

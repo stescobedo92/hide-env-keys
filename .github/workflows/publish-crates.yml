@@ -44,10 +44,12 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Verify workspace version
+      - name: Sync and verify workspace version
         shell: bash
         run: |
           set -euo pipefail
+          node scripts/sync-release-version.mjs "${{ steps.version.outputs.version }}"
+          cargo generate-lockfile
           actual=$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "evault-cli") | .version')
           if [[ "$actual" != "${{ steps.version.outputs.version }}" ]]; then

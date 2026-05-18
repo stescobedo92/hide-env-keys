@@ -15,7 +15,7 @@ description = "In-memory backends for evault (test fixtures)."
 workspace = true
 
 [dependencies]
-evault-core = { path = "../evault-core", version = "0.1" }
+evault-core = { path = "../evault-core", version = "0.1.1" }
 
 [dev-dependencies]
 time = { version = "0.3", features = ["macros"] }

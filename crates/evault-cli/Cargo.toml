@@ -19,15 +19,15 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-evault-core = { path = "../evault-core", version = "0.1" }
-evault-store-memory = { path = "../evault-store-memory", version = "0.1" }
-evault-store-sqlcipher = { path = "../evault-store-sqlcipher", version = "0.1" }
-evault-store-keyring = { path = "../evault-store-keyring", version = "0.1" }
-evault-manifest = { path = "../evault-manifest", version = "0.1" }
-evault-materializer = { path = "../evault-materializer", version = "0.1" }
-evault-runner = { path = "../evault-runner", version = "0.1" }
-evault-scanner-regex = { path = "../evault-scanner-regex", version = "0.1" }
-evault-tui = { path = "../evault-tui", version = "0.1" }
+evault-core = { path = "../evault-core", version = "0.1.1" }
+evault-store-memory = { path = "../evault-store-memory", version = "0.1.1" }
+evault-store-sqlcipher = { path = "../evault-store-sqlcipher", version = "0.1.1" }
+evault-store-keyring = { path = "../evault-store-keyring", version = "0.1.1" }
+evault-manifest = { path = "../evault-manifest", version = "0.1.1" }
+evault-materializer = { path = "../evault-materializer", version = "0.1.1" }
+evault-runner = { path = "../evault-runner", version = "0.1.1" }
+evault-scanner-regex = { path = "../evault-scanner-regex", version = "0.1.1" }
+evault-tui = { path = "../evault-tui", version = "0.1.1" }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 secrecy = "0.10"

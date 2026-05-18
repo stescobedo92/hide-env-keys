@@ -23,7 +23,7 @@ default = []
 sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 
 [dependencies]
-evault-core = { path = "../evault-core", version = "0.1" }
+evault-core = { path = "../evault-core", version = "0.1.1" }
 rusqlite = { version = "0.39", features = ["bundled", "modern_sqlite"] }
 serde_json = "1"
 sha2 = "0.11"
