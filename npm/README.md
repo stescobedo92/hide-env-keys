@@ -63,7 +63,7 @@ After install, the native binary is at:
 node_modules/evault-cli-darwin-x64/bin/evault
 node_modules/evault-cli-darwin-arm64/bin/evault
 node_modules/evault-cli-linux-x64/bin/evault
-node_modules/evault-cli-win32-x64/bin/evault.exe
+node_modules/evault-cli-windows-x64/bin/evault.exe
 ```
 
 ## Troubleshooting

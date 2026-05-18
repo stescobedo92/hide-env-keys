@@ -1,5 +1,5 @@
 {
-  "name": "evault-cli-win32-x64",
+  "name": "evault-cli-windows-x64",
   "version": "0.1.1",
   "description": "Windows x64 binary for evault-cli.",
   "license": "MIT",

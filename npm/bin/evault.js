@@ -14,7 +14,7 @@ const PACKAGE_BY_PLATFORM = {
   "darwin-arm64": "evault-cli-darwin-arm64",
   "darwin-x64": "evault-cli-darwin-x64",
   "linux-x64": "evault-cli-linux-x64",
-  "win32-x64": "evault-cli-win32-x64",
+  "win32-x64": "evault-cli-windows-x64",
 };
 
 function resolveBinary() {
