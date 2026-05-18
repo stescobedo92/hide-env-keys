@@ -150,7 +150,10 @@ jobs:
             package_dir="$1"
             target="$2"
             mkdir -p "npm/packages/${package_dir}/bin"
-            tar -xJf "dist/evault-v${version}-${target}.tar.xz" -C "npm/packages/${package_dir}/bin" evault
+            tmp="$(mktemp -d)"
+            tar -xJf "dist/evault-v${version}-${target}.tar.xz" -C "$tmp"
+            cp "$tmp/evault" "npm/packages/${package_dir}/bin/evault"
+            rm -rf "$tmp"
             chmod 0755 "npm/packages/${package_dir}/bin/evault"
             cp npm/packages/README.md "npm/packages/${package_dir}/README.md"
             cp LICENSE "npm/packages/${package_dir}/LICENSE"
